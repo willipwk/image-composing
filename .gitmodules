@@ -1,0 +1,8 @@
+[submodule "MoGe"]
+	path = MoGe
+	url = https://github.com/microsoft/MoGe.git
+	branch = main
+[submodule "Intrinsic"]
+	path = Intrinsic
+	url = https://github.com/compphoto/Intrinsic.git
+	branch = main
