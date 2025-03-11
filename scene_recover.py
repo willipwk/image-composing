@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 import trimesh
 import open3d as o3d
 from typing import Tuple
-from utils import save_ply, mse, inpaint_render
+from utils import save_ply, mse, inpaint_render, ply_mesh, str2float_tuple
 
 
 def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -232,7 +232,7 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
 
     show(test_render)
 
-    return scene
+    return scene_dict
 
 
 def optimize_light(scene, target, mask, grid_size: int):
@@ -295,6 +295,41 @@ def optimize_light(scene, target, mask, grid_size: int):
 
         print(f"Iteration {it:02d}: {loss}", end='\r')
 
+def insert_object(scene_dict, obj_name, obj):
+    scene_dict[obj_name] = obj
+
+    scene = mi.load_dict(scene_dict)
+    scene_params = mi.traverse(scene)
+
+    while(True):
+        #print(f"Current Transform: {scene_dict['teapot']['to_world']}")
+        command = input("type \"trans\" to translate, \"rotate\" to rotate, \"exit\" to stop: ")
+        current = scene_dict[obj_name]['to_world']
+        print(current)
+
+        if command == "trans":
+            command = input("input translate value separated by comma: ")
+            locations = str2float_tuple(command)
+            if locations==None: continue
+            scene_dict[obj_name]['to_world'] = current.translate(mi.ScalarPoint3f(locations))
+
+        elif command == "rotate":
+            command = input("input axis and angle separated by comma (e.g.) 0.0,1.0,0.0,90: ")
+            rotation = str2float_tuple(command, 4)
+            if rotation==None: continue
+            scene_dict[obj_name]['to_world'] = current.rotate(axis=mi.ScalarPoint3f(rotation[:3]), angle=rotation[3])
+
+        elif command == "exit":
+            break
+        else:
+            print("Invalid input: ", command)
+        
+
+        scene = mi.load_dict(scene_dict)
+        show(mi.render(scene, mi.traverse(scene), sensor=1, spp=64))
+        plt.show()
+    return scene_dict
+
 
 def main():
     device = 'cuda'
@@ -319,15 +354,20 @@ def main():
 
     grid_size = 4 # size of point light grid (grid_size x grid_size)
     margin = 50 # margin around the image for the grid
-    scene = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width, grid_size, margin)
+    scene_dict = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width, grid_size, margin)
 
     # setup optimization target
     np_target = sub_dif_shd * sub_alb # the optimization target is the diffuse image
+
     target = mi.TensorXf(np_target)
 
-    optimize_light(scene, target, mask, grid_size)
+    optimize_light(mi.load_dict(scene_dict), target, mask, grid_size)
+
+    # insert object
+    insert_object(scene_dict, "teapot", ply_mesh("./assets/teapot-small.ply"))
 
     # show the original image along side our rendered reconstruction
+    scene = mi.load_dict(scene_dict)
     params = mi.traverse(scene)
     rendered = mi.render(scene, params, sensor=1, spp=1024)
     inpainted_render = inpaint_render(rendered, albedo, dif_shd, edge_mask, sky_comp_mask)

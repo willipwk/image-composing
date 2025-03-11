@@ -60,3 +60,37 @@ def inpaint_render(render, albedo, dif_shd, edge_mask, sky_mask, comp_sky=True):
         final_render = inpainted_render
 
     return final_render
+
+def ply_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
+    shape_dict = {
+        'type': 'ply', 
+        'filename': mesh_path
+    }
+
+    if transform:
+        shape_dict['to_world'] = mi.ScalarTransform4f().look_at(
+        mi.ScalarPoint3f(transform),  # camera at origin
+        mi.ScalarPoint3f([0, 0, -1]), 
+        mi.ScalarPoint3f([0, 1, 0])
+    )
+    
+    if bsdf:
+        shape_dict['bsdf'] = bsdf
+    else:
+        shape_dict['bsdf'] = {'type': 'diffuse'}
+    
+    return shape_dict
+
+def str2float_tuple(input, size=3):
+    """
+    Converts a string of three floats separated by commas into a tuple of floats.
+    Returns None if size of tuple does not match
+    """
+    try:
+        float_list = [float(x) for x in input.split(',')]
+        if len(float_list) == size:
+            return tuple(float_list)
+        else:
+            return None
+    except ValueError:
+        return None
