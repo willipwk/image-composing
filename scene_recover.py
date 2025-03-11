@@ -294,6 +294,7 @@ def optimize_light(scene, target, mask, grid_size: int):
             break
 
         print(f"Iteration {it:02d}: {loss}", end='\r')
+    return params
 
 def insert_object(scene_dict, obj_name, obj):
     scene_dict[obj_name] = obj
@@ -361,7 +362,18 @@ def main():
 
     target = mi.TensorXf(np_target)
 
-    optimize_light(mi.load_dict(scene_dict), target, mask, grid_size)
+    optimized_params = optimize_light(mi.load_dict(scene_dict), target, mask, grid_size)
+
+    for key in scene_dict.keys():
+        if key.find("pointlight") != -1:
+            scene_dict[key] = {
+                'type': 'point',
+                'position': list(np.asarray(optimized_params[key + '.position']).flatten()),
+                'intensity': {
+                    'type': 'rgb',
+                    'value': list(np.asarray(optimized_params[key + '.intensity.value']).flatten())
+                }
+            }
 
     # insert object
     insert_object(scene_dict, "teapot", ply_mesh("./assets/teapot-small.ply"))
@@ -369,7 +381,7 @@ def main():
     # show the original image along side our rendered reconstruction
     scene = mi.load_dict(scene_dict)
     params = mi.traverse(scene)
-    rendered = mi.render(scene, params, sensor=1, spp=1024)
+    rendered = mi.render(scene, params, sensor=1, spp=4096)
     inpainted_render = inpaint_render(rendered, albedo, dif_shd, edge_mask, sky_comp_mask)
     show([(dif_shd * albedo), inpainted_render])
     plt.show()
