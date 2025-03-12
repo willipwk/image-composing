@@ -375,6 +375,11 @@ def main():
                 }
             }
 
+    # It seems like optimizer also refines envmap?
+    # I'm not sure if we should include this:
+    opt_envmap_data = optimized_params['envmap.data'].numpy()
+    scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
+
     # insert object
     insert_object(scene_dict, "teapot", ply_mesh("./assets/teapot-small.ply"))
 

@@ -5,3 +5,5 @@ __pycache__/
 *.pyw
 *.pyz
 *.pyzw
+
+result/
