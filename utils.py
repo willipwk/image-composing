@@ -77,7 +77,14 @@ def ply_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
     if bsdf:
         shape_dict['bsdf'] = bsdf
     else:
-        shape_dict['bsdf'] = {'type': 'diffuse'}
+        shape_dict['bsdf'] = {
+            'type': 'diffuse',
+            'reflectance':
+            {
+                'type': 'mesh_attribute',
+                'name': 'vertex_color'
+            }
+        }
     
     return shape_dict
 

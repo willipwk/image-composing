@@ -299,9 +299,6 @@ def optimize_light(scene, target, mask, grid_size: int):
 def insert_object(scene_dict, obj_name, obj):
     scene_dict[obj_name] = obj
 
-    scene = mi.load_dict(scene_dict)
-    scene_params = mi.traverse(scene)
-
     while(True):
         #print(f"Current Transform: {scene_dict['teapot']['to_world']}")
         command = input("type \"trans\" to translate, \"rotate\" to rotate, \"exit\" to stop: ")
@@ -332,7 +329,65 @@ def insert_object(scene_dict, obj_name, obj):
     return scene_dict
 
 
+def generate_3D_mesh(img_path):
+    device = 'cuda'
+    threshold = 0.02 # threshold for cutting mesh edges
+    sub_scale = 0.5 # scale factor for rendering/optimization
+
+    # prepare image
+    img = load_from_url(img_path)
+    img = rescale(img, 0.4)
+
+    image, albedo, dif_shd = intrinsic_decomposition(img)
+    # rescale image for optimizing lighting conditions
+    height, width = image.shape[:2]
+    sub_h = math.ceil(height * sub_scale)
+    sub_w = math.ceil(width * sub_scale)
+
+    sub_alb = resize(albedo, (sub_h, sub_w))
+    sub_dif_shd = resize(dif_shd, (sub_h, sub_w))
+    sub_img = resize(image, (sub_h, sub_w))
+
+    cam_intrinsics, mask, sky_comp_mask, edge_mask = geometry_reconstruction(sub_img, height, width, sub_h, sub_w, albedo, device, threshold)
+
+    print("Geometry constructed")
+
+    grid_size = 4 # size of point light grid (grid_size x grid_size)
+    margin = 50 # margin around the image for the grid
+    scene_dict = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width, grid_size, margin)
+
+    # setup optimization target
+    np_target = sub_dif_shd * sub_alb # the optimization target is the diffuse image
+
+    target = mi.TensorXf(np_target)
+
+    optimized_params = optimize_light(mi.load_dict(scene_dict), target, mask, grid_size)
+
+    for key in scene_dict.keys():
+        if key.find("pointlight") != -1:
+            scene_dict[key] = {
+                'type': 'point',
+                'position': list(np.asarray(optimized_params[key + '.position']).flatten()),
+                'intensity': {
+                    'type': 'rgb',
+                    'value': list(np.asarray(optimized_params[key + '.intensity.value']).flatten())
+                }
+            }
+
+    # It seems like optimizer also refines envmap?
+    # I'm not sure if we should include this:
+    opt_envmap_data = optimized_params['envmap.data'].numpy()
+    scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
+
+    scene = mi.load_dict(scene_dict)
+    rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=64)
+
+    rendered = np.array(rendered)
+    rendered = np.clip(rendered, 0, 1)
+    return rendered
+
 def main():
+
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
