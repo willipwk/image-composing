@@ -341,7 +341,8 @@ def generate_3D_mesh(img_path, scene_dict):
     sub_scale = 0.5 # scale factor for rendering/optimization
 
     # prepare image
-    img = load_from_url(img_path)
+    img = load_image(img_path)
+    # img = load_from_url(img_path)
     img = rescale(img, 0.4)
 
     image, albedo, dif_shd = intrinsic_decomposition(img)

@@ -75,15 +75,16 @@ def main():
         with gr.Row():
             with gr.Column(scale=1):
                 with gr.Tab("Input Image"):
-                    src_image_path = gr.Textbox(value='https://images.unsplash.com/photo-1723642613951-8f17ad33554a', label="Image URL")
+                    # src_image_path = gr.Textbox(value='https://images.unsplash.com/photo-1723642613951-8f17ad33554a', label="Image URL")
+                    src_image_path = gr.File()
                     src_image = gr.Image(src_image_path.value)
                     src_image_path.change(fn=lambda x:x, inputs=src_image_path, outputs=src_image)
                     btn_1 = gr.Button("Start")
                     
                 with gr.Tab("Object Insertion"):
-                    src_obj_path = gr.Textbox(value="./assets/tree/normalized_model.obj", label="Object Path")
+                    src_obj_path = gr.Textbox(value="./assets/bag/normalized_model.obj", label="Object Path")
                     # src_texture_path = gr.Textbox(value="./assets/tree/texture.png", label="Texture Path")
-                    src_obj_name = gr.Textbox(value="tree", label="Object Name")
+                    src_obj_name = gr.Textbox(value="bag", label="Object Name")
                     with gr.Group():
                         gr.Markdown("Translation")
                         translation_x = gr.Slider(minimum=-10, maximum=10, value=0, label="translation_x")
