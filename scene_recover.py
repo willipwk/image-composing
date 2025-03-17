@@ -35,11 +35,13 @@ import pickle
 import re
 
 import matplotlib.pyplot as plt
+from dict2xml import dict2xml
+from scipy.spatial.transform import Rotation as R
 
 import trimesh
 import open3d as o3d
 from typing import Tuple
-from utils import save_ply, mse, inpaint_render, ply_mesh, str2float_tuple
+from utils import save_ply, mse, inpaint_render, ply_mesh, obj_mesh, extract_mtl_file, extract_texture_paths, str2float_tuple
 
 
 def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -296,40 +298,44 @@ def optimize_light(scene, target, mask, grid_size: int):
         print(f"Iteration {it:02d}: {loss}", end='\r')
     return params
 
-def insert_object(scene_dict, obj_name, obj):
-    scene_dict[obj_name] = obj
+def insert_object(scene_dict, obj_name, obj_path, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z):
+    translation = (translation_x, translation_y, translation_z)
+    rotation = (rotation_x, rotation_y, rotation_z)
+    scale = (scale_x, scale_y, scale_z)
+    if obj_name not in scene_dict.keys():
+        mtl_path = extract_mtl_file(obj_path)
+        print(mtl_path)
+        relative_mtl_path = obj_path[:obj_path.rfind('/') + 1] + mtl_path
+        print(relative_mtl_path)
+        texture_paths = extract_texture_paths(relative_mtl_path)
+        # TODO: currently only assume one texture image for an object
+        relative_texture_path = obj_path[:obj_path.rfind('/')] + texture_paths[0][texture_paths[0].rfind('/'):]
+        # obj = ply_mesh_texture(obj_path)
+        obj = obj_mesh(obj_path, texture_path=relative_texture_path)
+        scene_dict[obj_name] = obj
 
-    while(True):
-        #print(f"Current Transform: {scene_dict['teapot']['to_world']}")
-        command = input("type \"trans\" to translate, \"rotate\" to rotate, \"exit\" to stop: ")
-        current = scene_dict[obj_name]['to_world']
-        print(current)
+    current = scene_dict[obj_name]['to_world']
+    print(current)
+    rotvec = R.from_euler('xyz', np.array(rotation), degrees=True).as_rotvec(degrees=True)
+    print(rotvec)
+    angle = np.linalg.norm(rotvec)
+    if angle < 1e-10:
+        axis = np.array([1, 0, 0])
+    else:
+        axis = rotvec / angle
 
-        if command == "trans":
-            command = input("input translate value separated by comma: ")
-            locations = str2float_tuple(command)
-            if locations==None: continue
-            scene_dict[obj_name]['to_world'] = current.translate(mi.ScalarPoint3f(locations))
+    scene_dict[obj_name]['to_world'] = current.translate(mi.ScalarPoint3f(translation)).rotate(axis=mi.ScalarPoint3f(axis), angle=angle).scale(mi.ScalarPoint3f(scale))
+    # scene_dict[obj_name]['to_world'] = current.rotate(axis=mi.ScalarPoint3f(rotation[:3]), angle=rotation[3])
+    # scene_dict[obj_name]['to_world'] = current.scale(mi.ScalarPoint3f(scale))
 
-        elif command == "rotate":
-            command = input("input axis and angle separated by comma (e.g.) 0.0,1.0,0.0,90: ")
-            rotation = str2float_tuple(command, 4)
-            if rotation==None: continue
-            scene_dict[obj_name]['to_world'] = current.rotate(axis=mi.ScalarPoint3f(rotation[:3]), angle=rotation[3])
-
-        elif command == "exit":
-            break
-        else:
-            print("Invalid input: ", command)
-        
-
-        scene = mi.load_dict(scene_dict)
-        show(mi.render(scene, mi.traverse(scene), sensor=1, spp=64))
-        plt.show()
-    return scene_dict
+    scene = mi.load_dict(scene_dict)
+    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=64)
+    rendered_insert = np.array(rendered_insert)
+    rendered_insert = np.clip(rendered_insert, 0, 1)
+    return scene_dict, rendered_insert
 
 
-def generate_3D_mesh(img_path):
+def generate_3D_mesh(img_path, scene_dict):
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
@@ -380,11 +386,11 @@ def generate_3D_mesh(img_path):
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
 
     scene = mi.load_dict(scene_dict)
-    rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=64)
+    rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=4096)
 
     rendered = np.array(rendered)
     rendered = np.clip(rendered, 0, 1)
-    return rendered
+    return rendered, scene_dict
 
 def main():
 

@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import mitsuba as mi
 import drjit as dr
+import os
 from chrislib.general import invert, uninvert
 
 
@@ -87,6 +88,106 @@ def ply_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
         }
     
     return shape_dict
+
+
+def ply_mesh_texture(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
+    shape_dict = {
+        'type': 'ply', 
+        'filename': mesh_path
+    }
+
+    if transform:
+        shape_dict['to_world'] = mi.ScalarTransform4f().look_at(
+        mi.ScalarPoint3f(transform),  # camera at origin
+        mi.ScalarPoint3f([0, 0, -1]), 
+        mi.ScalarPoint3f([0, 1, 0])
+    )
+    
+    if bsdf:
+        shape_dict['bsdf'] = bsdf
+    else:
+        shape_dict['bsdf'] = {
+            'type': 'diffuse',
+            'reflectance': 
+            {
+                'type': 'bitmap',
+                'filename': 'assets/tree/texture.png'
+            }
+        }
+    
+    return shape_dict
+
+
+def obj_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None, texture_path=None):
+    shape_dict = {
+        'type': 'obj', 
+        'filename': mesh_path
+    }
+
+    if transform:
+        shape_dict['to_world'] = mi.ScalarTransform4f().look_at(
+        mi.ScalarPoint3f(transform),  # camera at origin
+        mi.ScalarPoint3f([0, 0, -1]), 
+        mi.ScalarPoint3f([0, 1, 0])
+    )
+    
+    if bsdf:
+        shape_dict['bsdf'] = bsdf
+    else:
+        if texture_path is not None:
+            shape_dict['bsdf'] = {
+                'type': 'diffuse',
+                'reflectance': 
+                {
+                    'type': 'bitmap',
+                    'filename': texture_path
+                }
+            }
+        else:
+            shape_dict['bsdf'] = {
+                'type': 'diffuse',
+                'reflectance':
+                {
+                    'type': 'mesh_attribute',
+                    'name': 'vertex_color'
+                }
+            }
+    
+    return shape_dict
+
+
+def extract_mtl_file(obj_file_path):
+    """Extract the associated MTL file from the OBJ file."""
+    mtl_filename = None
+    with open(obj_file_path, 'r') as obj_file:
+        for line in obj_file:
+            if line.lower().startswith('mtllib'):
+                mtl_filename = line.strip().split()[1]
+                break
+    return mtl_filename
+
+def extract_texture_paths(mtl_file_path):
+    """Extract texture paths from the MTL file."""
+    texture_paths = []
+    texture_keywords = ['map_Kd', 'map_Ka', 'map_Ks', 'map_Bump', 'bump', 'disp', 'decal', 'map_d']
+
+    if not os.path.exists(mtl_file_path):
+        print(f"MTL file not found: {mtl_file_path}")
+        return texture_paths
+
+    with open(mtl_file_path, 'r') as mtl_file:
+        for line in mtl_file:
+            print("line:", line)
+            for keyword in texture_keywords:
+                if line.startswith(keyword):
+                    print("line.strip:", line.strip())
+                    parts = line.strip().split()
+                    print("parts:", parts)
+                    if len(parts) > 1:
+                        texture_path = parts[1]
+                        texture_paths.append(texture_path)
+    return texture_paths
+
 
 def str2float_tuple(input, size=3):
     """
