@@ -298,10 +298,12 @@ def optimize_light(scene, target, mask, grid_size: int):
         print(f"Iteration {it:02d}: {loss}", end='\r')
     return params
 
-def insert_object(scene_dict, obj_name, obj_path, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z):
+def insert_object(scene_dict, interactive_state, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z):
     translation = (translation_x, translation_y, translation_z)
     rotation = (rotation_x, rotation_y, rotation_z)
     scale = (scale_x, scale_y, scale_z)
+    obj_name = interactive_state["src_obj_name"]
+    obj_path = interactive_state["src_obj_path"]
     if obj_name not in scene_dict.keys():
         mtl_path = extract_mtl_file(obj_path)
         print(mtl_path)
@@ -317,7 +319,6 @@ def insert_object(scene_dict, obj_name, obj_path, translation_x, translation_y, 
     current = scene_dict[obj_name]['to_world']
     print(current)
     rotvec = R.from_euler('xyz', np.array(rotation), degrees=True).as_rotvec(degrees=True)
-    print(rotvec)
     angle = np.linalg.norm(rotvec)
     if angle < 1e-10:
         axis = np.array([1, 0, 0])
@@ -329,13 +330,15 @@ def insert_object(scene_dict, obj_name, obj_path, translation_x, translation_y, 
     # scene_dict[obj_name]['to_world'] = current.scale(mi.ScalarPoint3f(scale))
 
     scene = mi.load_dict(scene_dict)
-    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=64)
-    rendered_insert = np.array(rendered_insert)
-    rendered_insert = np.clip(rendered_insert, 0, 1)
-    return scene_dict, rendered_insert
+    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=4096)
+    inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
+    inpainted_render = np.array(inpainted_render)
+    inpainted_render = np.clip(inpainted_render, 0, 1)
+
+    return scene_dict, inpainted_render
 
 
-def generate_3D_mesh(img_path, scene_dict):
+def generate_3D_mesh(img_path, scene_dict, interactive_state):
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
@@ -346,6 +349,8 @@ def generate_3D_mesh(img_path, scene_dict):
     img = rescale(img, 0.4)
 
     image, albedo, dif_shd = intrinsic_decomposition(img)
+    interactive_state["albedo"] = albedo
+    interactive_state["dif_shd"] = dif_shd
     # rescale image for optimizing lighting conditions
     height, width = image.shape[:2]
     sub_h = math.ceil(height * sub_scale)
@@ -356,6 +361,8 @@ def generate_3D_mesh(img_path, scene_dict):
     sub_img = resize(image, (sub_h, sub_w))
 
     cam_intrinsics, mask, sky_comp_mask, edge_mask = geometry_reconstruction(sub_img, height, width, sub_h, sub_w, albedo, device, threshold)
+    interactive_state["sky_comp_mask"] = sky_comp_mask
+    interactive_state["edge_mask"] = edge_mask
 
     print("Geometry constructed")
 
@@ -388,10 +395,10 @@ def generate_3D_mesh(img_path, scene_dict):
 
     scene = mi.load_dict(scene_dict)
     rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=4096)
-
-    rendered = np.array(rendered)
-    rendered = np.clip(rendered, 0, 1)
-    return rendered, scene_dict
+    inpainted_render = inpaint_render(rendered, albedo, dif_shd, edge_mask, sky_comp_mask)
+    inpainted_render = np.array(inpainted_render)
+    inpainted_render = np.clip(inpainted_render, 0, 1)
+    return inpainted_render, scene_dict, interactive_state
 
 def main():
 

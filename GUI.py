@@ -1,9 +1,13 @@
 import gradio as gr
 from scene_recover import *
 import mitsuba as mi
-import matplotlib.pyplot as plt
 import numpy as np
 import drjit
+
+
+example_image_paths = ["assets/tree/image.jpg", "assets/bag/image.jpg", "assets/bear/image.jpg", "assets/cage/image.jpg", \
+                       "assets/chair/image.jpg", "assets/desk/image.jpg", "assets/lamp/image.jpg", "assets/plant/image.jpg", \
+                       "assets/shelf/image.jpg", "assets/vase/image.jpg"]
 
 def initialize():
     # Couldn't figure out how to run mitsuba.load_dict() without this:
@@ -61,9 +65,10 @@ def initialize():
     scene = mi.load_dict(scene_dict)
 
 
-def get_slider_number(label, slider, interactive_state):
-    interactive_state[label] = slider
-
+def get_select_obj(evt: gr.SelectData, interactive_state: gr.State) -> gr.State:
+    select_index = evt.index
+    interactive_state["src_obj_path"] = example_image_paths[select_index].replace("image.jpg", "normalized_model.obj")
+    interactive_state["src_obj_name"] = example_image_paths[select_index].split('/')[1]
     return interactive_state
 
 
@@ -72,6 +77,14 @@ def main():
 
     with gr.Blocks(theme=gr.themes.Soft()) as gui:
         scene_dict = gr.State()
+        interactive_state = gr.State({
+            "src_obj_path": None,
+            "src_obj_name": None,
+            "albedo": None,
+            "dif_shd": None,
+            "edge_mask": None,
+            "sky_comp_mask": None,
+        })
         with gr.Row():
             with gr.Column(scale=1):
                 with gr.Tab("Input Image"):
@@ -82,9 +95,20 @@ def main():
                     btn_1 = gr.Button("Start")
                     
                 with gr.Tab("Object Insertion"):
-                    src_obj_path = gr.Textbox(value="./assets/bag/normalized_model.obj", label="Object Path")
+                    # src_obj_path = gr.Textbox(value="./assets/bag/normalized_model.obj", label="Object Path")
                     # src_texture_path = gr.Textbox(value="./assets/tree/texture.png", label="Texture Path")
-                    src_obj_name = gr.Textbox(value="bag", label="Object Name")
+                    # src_obj_name = gr.Textbox(value="bag", label="Object Name")
+                    gr.Markdown("### Select a 3D object by clicking its image:")
+
+                    gallery = gr.Gallery(
+                        value=example_image_paths,  # Single images per row
+                        label="Example Objects",
+                        show_label=False,
+                        columns=2,  # Display images in 2 columns
+                        height="auto",
+                        object_fit="contain",
+                        allow_preview=False
+                    )
                     with gr.Group():
                         gr.Markdown("Translation")
                         translation_x = gr.Slider(minimum=-10, maximum=10, value=0, label="translation_x")
@@ -104,10 +128,11 @@ def main():
                     btn_2 = gr.Button("Insert")
             with gr.Column(scale=2):
                 res_image = gr.Image()
-        btn_1.click(fn=generate_3D_mesh, inputs=[src_image_path, scene_dict], outputs=[res_image, scene_dict])
-        btn_2.click(fn=insert_object, inputs=[scene_dict, src_obj_name, src_obj_path, translation_x, translation_y, translation_z, \
-                                              rotation_x, rotation_y, rotation_z, \
-                                              scale_x, scale_y, scale_z], outputs=[scene_dict, res_image])
+        btn_1.click(fn=generate_3D_mesh, inputs=[src_image_path, scene_dict, interactive_state], outputs=[res_image, scene_dict, interactive_state])
+
+        gallery.select(get_select_obj, inputs=interactive_state, outputs=interactive_state)
+        btn_2.click(fn=insert_object, inputs=[scene_dict, interactive_state, translation_x, translation_y, translation_z, \
+                                              rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z], outputs=[scene_dict, res_image])
 
     gui.launch()
 
