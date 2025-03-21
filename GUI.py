@@ -78,6 +78,7 @@ def main():
     with gr.Blocks(theme=gr.themes.Base()) as gui:
         scene_dict = gr.State()
         interactive_state = gr.State({
+            "src_img": None,
             "src_obj_path": None,
             "src_obj_name": None,
             "albedo": None,

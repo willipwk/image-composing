@@ -330,14 +330,15 @@ def insert_object(scene_dict, interactive_state, translation_x, translation_y, t
         axis = rotvec / angle
 
     scene_dict[obj_name]['to_world'] = current.translate(mi.ScalarPoint3f(translation)).rotate(axis=mi.ScalarPoint3f(axis), angle=angle).scale(mi.ScalarPoint3f(scale))
-    # scene_dict[obj_name]['to_world'] = current.rotate(axis=mi.ScalarPoint3f(rotation[:3]), angle=rotation[3])
-    # scene_dict[obj_name]['to_world'] = current.scale(mi.ScalarPoint3f(scale))
 
-    scene = mi.load_dict(scene_dict)
-    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=48)
-    inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
-    inpainted_render = np.array(inpainted_render)
-    inpainted_render = np.clip(inpainted_render, 0, 1)
+    
+    # scene = mi.load_dict(scene_dict)
+    # rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=48)
+    # inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
+    # inpainted_render = np.array(inpainted_render)
+    # inpainted_render = np.clip(inpainted_render, 0, 1)
+
+    inpainted_render = render(scene_dict, interactive_state, 48)
 
     return scene_dict, inpainted_render
 
@@ -353,6 +354,7 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
     img = img.astype(np.single) / float((2 ** 8) - 1)
     print(img)
     img = rescale(img, rescale_factor)
+    interactive_state["src_img"] = img
 
     image, albedo, dif_shd = intrinsic_decomposition(img)
     interactive_state["albedo"] = albedo
@@ -399,11 +401,7 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
     opt_envmap_data = optimized_params['envmap.data'].numpy()
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
 
-    scene = mi.load_dict(scene_dict)
-    rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=48)
-    inpainted_render = inpaint_render(rendered, albedo, dif_shd, edge_mask, sky_comp_mask)
-    inpainted_render = np.array(inpainted_render)
-    inpainted_render = np.clip(inpainted_render, 0, 1)
+    inpainted_render = render(scene_dict, interactive_state, 48)
     return inpainted_render, scene_dict, interactive_state
 
 def render(scene_dict, interactive_state, spp=4096):
@@ -411,8 +409,28 @@ def render(scene_dict, interactive_state, spp=4096):
     rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=spp)
     inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
     inpainted_render = np.array(inpainted_render)
+
+    inpainted_render = gamma_correct(interactive_state["src_img"], inpainted_render)
+
     inpainted_render = np.clip(inpainted_render, 0, 1)
     return inpainted_render
+
+def gamma_correct(ori_img, recon_img):
+    gamma_corrected = np.zeros_like(recon_img)
+
+    for channel in range(recon_img.shape[-1]):
+        mean_ori = np.mean(ori_img[..., channel])
+        mean_rec = np.mean(recon_img[..., channel])
+
+        if mean_rec > 0:
+            gamma = np.log(mean_ori) / np.log(mean_rec)
+            gamma_corrected[..., channel] = np.power(recon_img[..., channel], gamma)
+        else:
+            gamma_corrected[..., channel] = recon_img[..., channel]
+    
+    gamma_corrected = np.clip(gamma_corrected, 0, 1)
+
+    return gamma_corrected
 
 def main():
 
