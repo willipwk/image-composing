@@ -316,8 +316,12 @@ def insert_object(scene_dict, interactive_state, translation_x, translation_y, t
         obj = obj_mesh(obj_path, texture_path=relative_texture_path)
         scene_dict[obj_name] = obj
 
-    current = scene_dict[obj_name]['to_world']
-    print(current)
+    current = mi.ScalarTransform4f().look_at(
+        mi.ScalarPoint3f([0, 0 ,0]),  # camera at origin
+        mi.ScalarPoint3f([0, 0, -1]), 
+        mi.ScalarPoint3f([0, 1, 0])
+    )
+
     rotvec = R.from_euler('xyz', np.array(rotation), degrees=True).as_rotvec(degrees=True)
     angle = np.linalg.norm(rotvec)
     if angle < 1e-10:
@@ -330,7 +334,7 @@ def insert_object(scene_dict, interactive_state, translation_x, translation_y, t
     # scene_dict[obj_name]['to_world'] = current.scale(mi.ScalarPoint3f(scale))
 
     scene = mi.load_dict(scene_dict)
-    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=4096)
+    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=48)
     inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
     inpainted_render = np.array(inpainted_render)
     inpainted_render = np.clip(inpainted_render, 0, 1)
@@ -338,15 +342,17 @@ def insert_object(scene_dict, interactive_state, translation_x, translation_y, t
     return scene_dict, inpainted_render
 
 
-def generate_3D_mesh(img_path, scene_dict, interactive_state):
+def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
 
     # prepare image
-    img = load_image(img_path)
+    # img = load_image(img_path)
     # img = load_from_url(img_path)
-    img = rescale(img, 0.4)
+    img = img.astype(np.single) / float((2 ** 8) - 1)
+    print(img)
+    img = rescale(img, rescale_factor)
 
     image, albedo, dif_shd = intrinsic_decomposition(img)
     interactive_state["albedo"] = albedo
@@ -394,11 +400,19 @@ def generate_3D_mesh(img_path, scene_dict, interactive_state):
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
 
     scene = mi.load_dict(scene_dict)
-    rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=4096)
+    rendered = mi.render(scene, mi.traverse(scene), sensor=1, spp=48)
     inpainted_render = inpaint_render(rendered, albedo, dif_shd, edge_mask, sky_comp_mask)
     inpainted_render = np.array(inpainted_render)
     inpainted_render = np.clip(inpainted_render, 0, 1)
     return inpainted_render, scene_dict, interactive_state
+
+def render(scene_dict, interactive_state, spp=4096):
+    scene = mi.load_dict(scene_dict)
+    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=spp)
+    inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
+    inpainted_render = np.array(inpainted_render)
+    inpainted_render = np.clip(inpainted_render, 0, 1)
+    return inpainted_render
 
 def main():
 
