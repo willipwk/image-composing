@@ -85,6 +85,9 @@ def main():
             "dif_shd": None,
             "edge_mask": None,
             "sky_comp_mask": None,
+            "depth_wo_obj": None,
+            "rgb_wo_obj": None,
+            "rgb_w_obj": None,
         })
 
         gr.HTML(
@@ -127,6 +130,9 @@ def main():
                         scale_x.release(fn=lambda x,y,z,b: [x,x,x] if b else [x,y,z], inputs=[scale_x, scale_y, scale_z, scale_uni], outputs=[scale_x, scale_y, scale_z])
                         scale_y.release(fn=lambda x,y,z,b: [y,y,y] if b else [x,y,z], inputs=[scale_x, scale_y, scale_z, scale_uni], outputs=[scale_x, scale_y, scale_z])
                         scale_z.release(fn=lambda x,y,z,b: [z,z,z] if b else [x,y,z], inputs=[scale_x, scale_y, scale_z, scale_uni], outputs=[scale_x, scale_y, scale_z])
+                    with gr.Group():
+                        gr.HTML("""<div align="center">Differential Compositing Weight</div>""")
+                        compose_weight = gr.Slider(minimum=0.01, maximum=2, value=1.0, label="weight", step=0.01)
 
                     btn_2 = gr.Button("Insert", interactive=False)
             with gr.Column(scale=2):
@@ -168,7 +174,7 @@ def main():
 
         gallery.select(get_select_obj, inputs=interactive_state, outputs=interactive_state)
         btn_2.click(fn=insert_object, inputs=[scene_dict, interactive_state, translation_x, translation_y, translation_z, \
-                                              rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z], outputs=[scene_dict, res_image])
+                                              rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z, compose_weight], outputs=[scene_dict, res_image])
         
         btn_3.click(fn=render, inputs=[scene_dict, interactive_state], outputs=res_image,)
             

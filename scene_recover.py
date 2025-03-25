@@ -298,7 +298,7 @@ def optimize_light(scene, target, mask, grid_size: int):
         print(f"Iteration {it:02d}: {loss}", end='\r')
     return params
 
-def insert_object(scene_dict, interactive_state, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z):
+def insert_object(scene_dict, interactive_state, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z, compose_weight):
     translation = (translation_x, translation_y, translation_z)
     rotation = (rotation_x, rotation_y, rotation_z)
     scale = (scale_x, scale_y, scale_z)
@@ -338,9 +338,17 @@ def insert_object(scene_dict, interactive_state, translation_x, translation_y, t
     # inpainted_render = np.array(inpainted_render)
     # inpainted_render = np.clip(inpainted_render, 0, 1)
 
-    inpainted_render = render(scene_dict, interactive_state, 48)
+    inpainted_render = render(scene_dict, interactive_state, 1, 4096) # H, W, 3
 
-    return scene_dict, inpainted_render
+    depth_w_obj = render_depth(scene_dict, spp=48)
+    depth_wo_obj = interactive_state["depth_wo_obj"]
+    obj_mask = np.abs(depth_w_obj - depth_wo_obj) > 0.05 # H, W, 1
+    original_img = interactive_state["src_img"] # H, W, 3
+    recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
+    re_original_img = resize(original_img, recon_img.shape[:2], anti_aliasing=True)
+    compose_img = differential_compositing(re_original_img, recon_img, inpainted_render, obj_mask, compose_weight)
+
+    return scene_dict, compose_img
 
 
 def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
@@ -401,12 +409,19 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
     opt_envmap_data = optimized_params['envmap.data'].numpy()
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
 
-    inpainted_render = render(scene_dict, interactive_state, 48)
+    inpainted_render = render(scene_dict, interactive_state, 1, 4096)
+    depth_wo_obj = render_depth(scene_dict, 48)
+    interactive_state["depth_wo_obj"] = depth_wo_obj
+    interactive_state["rgb_wo_obj"] = inpainted_render
     return inpainted_render, scene_dict, interactive_state
 
-def render(scene_dict, interactive_state, spp=4096):
+def render(scene_dict, interactive_state, sensor_id=0, spp=4096):
+    scene_dict['integrator'] = {
+        'type': 'path',
+        'max_depth': 3
+    }
     scene = mi.load_dict(scene_dict)
-    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=spp)
+    rendered_insert = mi.render(scene, mi.traverse(scene), sensor=sensor_id, spp=spp)
     inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
     inpainted_render = np.array(inpainted_render)
 
@@ -431,6 +446,20 @@ def gamma_correct(ori_img, recon_img):
     gamma_corrected = np.clip(gamma_corrected, 0, 1)
 
     return gamma_corrected
+
+
+def render_depth(scene_dict, spp=48):
+    scene_dict['integrator'] = {'type': 'aov', 'aovs': 'dd.y:depth'}
+    scene = mi.load_dict(scene_dict)
+    rendered_depth = mi.render(scene, sensor=1, spp=spp)
+    return np.array(rendered_depth)
+
+
+def differential_compositing(ori_img, recon_img, insert_img, mask, weight):
+    compose = mask * insert_img + (1 - mask) * (ori_img + weight * (insert_img - recon_img))
+    compose = np.clip(compose, 0, 1)
+    return compose
+
 
 def main():
 
