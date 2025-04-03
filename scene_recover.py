@@ -236,10 +236,6 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
 
 
     aov_out = render_position_and_normal(scene_dict)
-    plt.imshow(aov_out[:,:,:3])
-    plt.savefig('aov_pos')
-    plt.imshow(aov_out[:,:,3:])
-    plt.savefig('aov_n.png')
     #print(scene_dict)
     return scene_dict, aov_out
 
@@ -472,8 +468,6 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
     object_states: list of object states
     """
 
-    print("Render with sensor=",sensor_id,", spp=",spp, "diff_comp_weight=",diff_compose_weight)
-
     scene_dict['integrator'] = {
         'type': 'path',
         'max_depth': 3
@@ -494,7 +488,6 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
     inpainted_render = np.clip(inpainted_render, 0, 1)
 
     result_img = inpainted_render
-
 
     if diff_compose_weight > 0:
         depth_w_obj = render_depth(composed_scene_dict, spp=48)
