@@ -156,7 +156,7 @@ def main():
             with gr.Column(scale=2):
                 res_image = gr.Image()
                 btn_3 = gr.Button("Render", variant='primary')
-                compose_weight = gr.Slider(minimum=0, maximum=2, value=1.0, label="Differential Compoiting Weight", step=0.01)
+                compose_weight = gr.Slider(minimum=0, maximum=2, value=1.0, label="Differential Compositing Weight", step=0.01)
                 
                 btn_3.click(render, inputs=[scene_dict, interactive_state, gr.State(1), hr_spp, compose_weight, object_states], outputs=[res_image])
 
@@ -192,9 +192,9 @@ def main():
                             with gr.Group():
                             # gr.HTML("""<div align="center">Position</div>""")
                                 pos = obj['position']
-                                pos_x_slider = gr.Slider(minimum=-5, maximum=5, value=pos[0], label="position_x")
-                                pos_y_slider = gr.Slider(minimum=-5, maximum=5, value=pos[1], label="position_y")
-                                pos_z_slider = gr.Slider(minimum=-5, maximum=5, value=pos[2], label='position_z')
+                                pos_x_slider = gr.Slider(minimum=-5, maximum=5, value=pos[0], step=0.01, label="position_x")
+                                pos_y_slider = gr.Slider(minimum=-5, maximum=5, value=pos[1], step=0.01, label="position_y")
+                                pos_z_slider = gr.Slider(minimum=-5, maximum=5, value=pos[2], step=0.01, label='position_z')
                                 pos_x_slider.change(updateState, inputs=[pos_x_slider, obj_index, type_position, x_index])
                                 pos_y_slider.change(updateState, inputs=[pos_y_slider, obj_index, type_position, y_index])
                                 pos_z_slider.change(updateState, inputs=[pos_z_slider, obj_index, type_position, z_index])
@@ -212,9 +212,9 @@ def main():
                             # gr.HTML("""<div align="center">Scale</div>""")
                             with gr.Group():
                                 scale = obj['scale']
-                                scale_x_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[0], label="scale_x", step=0.1)
-                                scale_y_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[1], label="scale_y", step=0.1)
-                                scale_z_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[2], label="scale_z", step=0.1)
+                                scale_x_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[0], label="scale_x", step=0.01)
+                                scale_y_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[1], label="scale_y", step=0.01)
+                                scale_z_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[2], label="scale_z", step=0.01)
                                 scale_x_slider.change(updateState, inputs=[scale_x_slider, obj_index, type_scale, x_index])
                                 scale_y_slider.change(updateState, inputs=[scale_y_slider, obj_index, type_scale, y_index])
                                 scale_z_slider.change(updateState, inputs=[scale_z_slider, obj_index, type_scale, z_index])
