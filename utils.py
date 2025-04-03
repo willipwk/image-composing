@@ -177,12 +177,12 @@ def extract_texture_paths(mtl_file_path):
 
     with open(mtl_file_path, 'r') as mtl_file:
         for line in mtl_file:
-            print("line:", line)
+            #print("line:", line)
             for keyword in texture_keywords:
                 if line.startswith(keyword):
-                    print("line.strip:", line.strip())
+                    #print("line.strip:", line.strip())
                     parts = line.strip().split()
-                    print("parts:", parts)
+                    #print("parts:", parts)
                     if len(parts) > 1:
                         texture_path = parts[1]
                         texture_paths.append(texture_path)
@@ -202,3 +202,40 @@ def str2float_tuple(input, size=3):
             return None
     except ValueError:
         return None
+
+def gamma_correction(original_image, reconstructed_image):
+    """
+    Adjusts the gamma of the reconstructed image to match the brightness of the original image.
+    """
+
+    corrected_image = np.zeros_like(reconstructed_image)
+
+    for channel in range(reconstructed_image.shape[-1]):
+        mean_original = np.mean(original_image[..., channel])
+        mean_reconstructed = np.mean(reconstructed_image[..., channel])
+
+        if mean_reconstructed > 0:
+            gamma = np.log(mean_original) / np.log(mean_reconstructed)
+            corrected_image[..., channel] = np.power(reconstructed_image[..., channel], gamma)
+        else:
+            corrected_image[..., channel] = reconstructed_image[..., channel]
+    
+    return np.clip(corrected_image, 0, 1)
+
+def auto_rescale_factor(scene, margin = 0.1):
+    """
+    returns rescale factor to fit within scene
+    Assuming that the object is normalized
+    """
+    scene_bounding_box = scene.bbox()
+
+    print(scene_bounding_box)
+
+    edge_lengths = []
+    for i in range(3):
+        edge_lengths.append(scene_bounding_box.max[i] - scene_bounding_box.min[i])
+
+    print(edge_lengths)
+    print(margin * max(edge_lengths))
+
+    return margin * max(edge_lengths)

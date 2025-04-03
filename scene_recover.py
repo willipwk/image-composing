@@ -3,7 +3,7 @@ import os
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 
-import math 
+import math
 
 # replace this with the path to the MoGe repository
 sys.path.append('./MoGe')
@@ -41,7 +41,7 @@ from scipy.spatial.transform import Rotation as R
 import trimesh
 import open3d as o3d
 from typing import Tuple
-from utils import save_ply, mse, inpaint_render, ply_mesh, obj_mesh, extract_mtl_file, extract_texture_paths, str2float_tuple
+from utils import *
 
 
 def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -49,9 +49,9 @@ def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     intrinsic_model = load_models('v2')
 
     intrinsic_result = run_pipeline(
-        intrinsic_model, 
-        img, 
-        linear=False, 
+        intrinsic_model,
+        img,
+        linear=False,
         resize_conf=1024
     )
 
@@ -59,7 +59,7 @@ def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     hr_shd = intrinsic_result['hr_shd']
     dif_shd = intrinsic_result['dif_shd']
     image = intrinsic_result['image']
-    show([image, albedo, dif_shd])
+    # show([image, albedo, dif_shd])
     return image, albedo, dif_shd
 
 
@@ -109,7 +109,7 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
     mesh_dict = {
         'type': 'ply',
         'filename': 'mesh.ply',
-        'bsdf': 
+        'bsdf':
         {
             'type': 'diffuse',
             'reflectance':
@@ -135,7 +135,7 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
 
     cam_dict1 = {
         'type': 'perspective',
-        'fov': float(fov_y), 
+        'fov': float(fov_y),
         'fov_axis' : 'y',
         'to_world': mi.ScalarTransform4f().look_at(
             mi.ScalarPoint3f([0, 0, 0]),  # camera at origin
@@ -151,7 +151,7 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
     }
     cam_dict2 = {
         'type': 'perspective',
-        'fov': float(fov_y), 
+        'fov': float(fov_y),
         'fov_axis' : 'y',
         'to_world': mi.ScalarTransform4f().look_at(
             mi.ScalarPoint3f([0, 0, 0]),  # camera at origin
@@ -216,7 +216,7 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
         pl_count += 1
 
 
-    # we render the scene with the path tracer integrator, 
+    # we render the scene with the path tracer integrator,
     # I set the max depth to 2 to speed up the render, but this can be experimented with
     scene_dict['integrator'] = {
         'type': 'path',
@@ -227,18 +227,26 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
         'type': 'orthogonal',
     }
 
-    scene = mi.load_dict(scene_dict)
-    scene_params = mi.traverse(scene)
+    #scene = mi.load_dict(scene_dict)
+    #scene_params = mi.traverse(scene)
 
-    test_render = mi.render(scene, sensor=1, spp=64)
+    #test_render = mi.render(scene, sensor=1, spp=64)
 
-    show(test_render)
+    #show(test_render)
 
-    return scene_dict
+
+    aov_out = render_position_and_normal(scene_dict)
+    plt.imshow(aov_out[:,:,:3])
+    plt.savefig('aov_pos')
+    plt.imshow(aov_out[:,:,3:])
+    plt.savefig('aov_n.png')
+    #print(scene_dict)
+    return scene_dict, aov_out
 
 
 def optimize_light(scene, target, mask, grid_size: int):
     # we optimize the light positions and intensities along side the environment map
+
     params = mi.traverse(scene)
 
     keys = []
@@ -252,7 +260,7 @@ def optimize_light(scene, target, mask, grid_size: int):
         opt[k] = params[k]
 
     # optimization
-    MAX_ITERATIONS = 150
+    MAX_ITERATIONS = 20
     errors = []
     curr_loss = float('inf')
     best_loss = float('inf')
@@ -269,7 +277,7 @@ def optimize_light(scene, target, mask, grid_size: int):
 
         # Evaluate the objective function from the current rendered image
         loss = mse(
-            rendered, 
+            rendered,
             target,
             mask=mask
         )
@@ -298,29 +306,41 @@ def optimize_light(scene, target, mask, grid_size: int):
         print(f"Iteration {it:02d}: {loss}", end='\r')
     return params
 
-def insert_object(scene_dict, interactive_state, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z, compose_weight):
-    translation = (translation_x, translation_y, translation_z)
-    rotation = (rotation_x, rotation_y, rotation_z)
-    scale = (scale_x, scale_y, scale_z)
-    obj_name = interactive_state["src_obj_name"]
-    obj_path = interactive_state["src_obj_path"]
-    if obj_name not in scene_dict.keys():
-        mtl_path = extract_mtl_file(obj_path)
-        print(mtl_path)
-        relative_mtl_path = obj_path[:obj_path.rfind('/') + 1] + mtl_path
-        print(relative_mtl_path)
-        texture_paths = extract_texture_paths(relative_mtl_path)
-        # TODO: currently only assume one texture image for an object
-        relative_texture_path = obj_path[:obj_path.rfind('/')] + texture_paths[0][texture_paths[0].rfind('/'):]
-        # obj = ply_mesh_texture(obj_path)
-        obj = obj_mesh(obj_path, texture_path=relative_texture_path)
-        scene_dict[obj_name] = obj
+def state2dict(object_state):
+    """
+    Input: object_state: A dictionary containing object information
+        keys:
+            'obj_name': object name
+            'obj_path': path to the object file
+            'position' ([float, float, float]): 3D coordinates in the scene
+            'rotation' ([float, float, float]): rotation along each axis
+            'scale' ([float, float, float]): scale factor for each asix
+    Output: A dictionary that can be used for mitsuba scene dictionary
+    """
 
-    current = mi.ScalarTransform4f().look_at(
-        mi.ScalarPoint3f([0, 0 ,0]),  # camera at origin
-        mi.ScalarPoint3f([0, 0, -1]), 
-        mi.ScalarPoint3f([0, 1, 0])
-    )
+    if object_state is None:
+        return {}
+
+    object_dict = {}
+    print("Convert: ", object_state)
+
+    obj_name = object_state["obj_name"]
+    obj_path = object_state["obj_path"]
+    position = object_state['position']
+    rotation = object_state['rotation']
+    scale = object_state['scale']
+
+    mtl_path = extract_mtl_file(obj_path)
+    #print(mtl_path)
+    relative_mtl_path = obj_path[:obj_path.rfind('/') + 1] + mtl_path
+    #print(relative_mtl_path)
+    texture_paths = extract_texture_paths(relative_mtl_path)
+    # TODO: currently only assume one texture image for an object
+    relative_texture_path = obj_path[:obj_path.rfind('/')] + texture_paths[0][texture_paths[0].rfind('/'):]
+    # obj = ply_mesh_texture(obj_path)
+    obj = obj_mesh(obj_path, texture_path=relative_texture_path)
+
+    object_dict[obj_name] = obj
 
     rotvec = R.from_euler('xyz', np.array(rotation), degrees=True).as_rotvec(degrees=True)
     angle = np.linalg.norm(rotvec)
@@ -329,29 +349,59 @@ def insert_object(scene_dict, interactive_state, translation_x, translation_y, t
     else:
         axis = rotvec / angle
 
-    scene_dict[obj_name]['to_world'] = current.translate(mi.ScalarPoint3f(translation)).rotate(axis=mi.ScalarPoint3f(axis), angle=angle).scale(mi.ScalarPoint3f(scale))
-
     
-    # scene = mi.load_dict(scene_dict)
-    # rendered_insert = mi.render(scene, mi.traverse(scene), sensor=1, spp=48)
-    # inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
-    # inpainted_render = np.array(inpainted_render)
-    # inpainted_render = np.clip(inpainted_render, 0, 1)
+    print("Insert ", obj_name, " into ", position)
 
-    inpainted_render = render(scene_dict, interactive_state, 1, 4096) # H, W, 3
+    current=mi.ScalarTransform4f().look_at(
+            mi.ScalarPoint3f([0, 0, 0]),
+            mi.ScalarPoint3f([0, 0, -1]),
+            mi.ScalarPoint3f([0, 1, 0])
+        )
+    object_dict[obj_name]['to_world'] = current.translate(mi.ScalarPoint3f(position)).rotate(axis=mi.ScalarPoint3f(axis), angle=angle).scale(mi.ScalarPoint3f(scale))
 
-    depth_w_obj = render_depth(scene_dict, spp=48)
-    depth_wo_obj = interactive_state["depth_wo_obj"]
-    obj_mask = np.abs(depth_w_obj - depth_wo_obj) > 0.05 # H, W, 1
-    original_img = interactive_state["src_img"] # H, W, 3
-    recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
-    re_original_img = resize(original_img, recon_img.shape[:2], anti_aliasing=True)
-    compose_img = differential_compositing(re_original_img, recon_img, inpainted_render, obj_mask, compose_weight)
+    return object_dict
 
-    return scene_dict, compose_img
+def insert_object(object_states, new_object, position, scale=1):
+    """
+    add new_object to object_states
+    Input:
+        object_states:
+        new_object_state: new object to be inserted {"obj_name", "obj_path"}
+        position:
+        rotation:
+        scale:
+    Output:
+        updated object_states
+    """
+
+    if new_object is None:
+        return object_states
+
+    print("Object insertion: ", new_object)
+
+    obj_name = new_object["obj_name"]
+    obj_path = new_object["obj_path"]
+
+    for i in range(len(object_states)):
+        if any(obj_name==obj['obj_name'] for obj in object_states):
+            obj_name = obj_name.split('_')[0] + '_' + str(i+2)
+        else:
+            break
+
+    object_states.append(
+        {
+            'obj_name': obj_name,
+            'obj_path': obj_path,
+            'position': position,
+            'rotation': [0,0,0],
+            'scale': [scale, scale, scale]
+        }
+    )
+
+    return object_states
 
 
-def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
+def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state, hr_spp=4096):
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
@@ -384,7 +434,7 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
 
     grid_size = 4 # size of point light grid (grid_size x grid_size)
     margin = 50 # margin around the image for the grid
-    scene_dict = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width, grid_size, margin)
+    scene_dict, interactive_state["aov_out"] = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width, grid_size, margin)
 
     # setup optimization target
     np_target = sub_dif_shd * sub_alb # the optimization target is the diffuse image
@@ -408,44 +458,54 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state):
     # I'm not sure if we should include this:
     opt_envmap_data = optimized_params['envmap.data'].numpy()
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
+    print("\nLighting optimized")
 
-    inpainted_render = render(scene_dict, interactive_state, 1, 4096)
+    inpainted_render = render(scene_dict, interactive_state, 1, hr_spp, 0)
     depth_wo_obj = render_depth(scene_dict, 48)
     interactive_state["depth_wo_obj"] = depth_wo_obj
     interactive_state["rgb_wo_obj"] = inpainted_render
-    return inpainted_render, scene_dict, interactive_state
+    return None, scene_dict, interactive_state, auto_rescale_factor(mi.load_dict(scene_dict))
 
-def render(scene_dict, interactive_state, sensor_id=0, spp=4096):
+def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_weight=0, object_states=[]):
+    """
+    scene_dict: scene dictionary of geometry and lighting
+    object_states: list of object states
+    """
+
+    print("Render with sensor=",sensor_id,", spp=",spp, "diff_comp_weight=",diff_compose_weight)
+
     scene_dict['integrator'] = {
         'type': 'path',
         'max_depth': 3
     }
-    scene = mi.load_dict(scene_dict)
+
+    object_dict = {}
+    for obj_state in object_states:
+        object_dict.update(state2dict(obj_state))
+
+    composed_scene_dict = scene_dict | object_dict
+
+    scene = mi.load_dict(composed_scene_dict)
     rendered_insert = mi.render(scene, mi.traverse(scene), sensor=sensor_id, spp=spp)
     inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
     inpainted_render = np.array(inpainted_render)
-
-    inpainted_render = gamma_correct(interactive_state["src_img"], inpainted_render)
+    inpainted_render = gamma_correction(interactive_state["src_img"], inpainted_render)
 
     inpainted_render = np.clip(inpainted_render, 0, 1)
-    return inpainted_render
 
-def gamma_correct(ori_img, recon_img):
-    gamma_corrected = np.zeros_like(recon_img)
+    result_img = inpainted_render
 
-    for channel in range(recon_img.shape[-1]):
-        mean_ori = np.mean(ori_img[..., channel])
-        mean_rec = np.mean(recon_img[..., channel])
 
-        if mean_rec > 0:
-            gamma = np.log(mean_ori) / np.log(mean_rec)
-            gamma_corrected[..., channel] = np.power(recon_img[..., channel], gamma)
-        else:
-            gamma_corrected[..., channel] = recon_img[..., channel]
-    
-    gamma_corrected = np.clip(gamma_corrected, 0, 1)
+    if diff_compose_weight > 0:
+        depth_w_obj = render_depth(composed_scene_dict, spp=48)
+        depth_wo_obj = interactive_state["depth_wo_obj"]
+        obj_mask = np.abs(depth_w_obj - depth_wo_obj) > 0.05 # H, W, 1
+        original_img = interactive_state["src_img"] # H, W, 3
+        recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
+        re_original_img = resize(original_img, recon_img.shape[:2], anti_aliasing=True)
+        result_img = differential_compositing(re_original_img, recon_img, inpainted_render, obj_mask, diff_compose_weight)
 
-    return gamma_corrected
+    return result_img
 
 
 def render_depth(scene_dict, spp=48):
@@ -454,11 +514,41 @@ def render_depth(scene_dict, spp=48):
     rendered_depth = mi.render(scene, sensor=1, spp=spp)
     return np.array(rendered_depth)
 
+def render_position_and_normal(scene_dict, spp=48):
+    _scene_dict = scene_dict.copy()
+    _scene_dict['integrator'] = {'type': 'aov', 'aovs': 'pos:position, normal:sh_normal'}
+    scene = mi.load_dict(_scene_dict)
+    aov_out = mi.render(scene, sensor=1, spp=spp)
+    return aov_out
 
 def differential_compositing(ori_img, recon_img, insert_img, mask, weight):
     compose = mask * insert_img + (1 - mask) * (ori_img + weight * (insert_img - recon_img))
     compose = np.clip(compose, 0, 1)
     return compose
+
+def get_position_normal(scene_dict, pixel_coord, sensor_id=1):
+    x, y = pixel_coord
+    scene = mi.load_dict(scene_dict)
+    camera = scene.sensors()[1]
+    film = camera.film()
+    resolution = film.crop_size()
+
+
+    import random
+    sample1 = random.random()
+    sample2 = mi.Point2f(x / resolution[0], y / resolution[1])
+    sample3 = mi.Point2f(random.random(), random.random())
+
+    ray, _ = camera.sample_ray(time=0, sample1=sample1, sample2=sample2, sample3=sample3, active=True)
+    intersection=scene.ray_intersect(ray)
+
+    if intersection.is_valid():
+        position = (np.array(intersection.p)).flatten() * [-1,1,-1]
+        normal = dr.normalize(intersection.n)
+        return position, normal
+    else:
+        print("no intersection")
+        return None, None
 
 
 def main():

@@ -3,6 +3,7 @@ from scene_recover import *
 import mitsuba as mi
 import numpy as np
 import drjit
+import json
 
 
 example_image_paths = ["assets/tree/image.jpg", "assets/bag/image.jpg", "assets/bear/image.jpg", "assets/cage/image.jpg", \
@@ -62,15 +63,30 @@ def initialize():
             'value': [0.01, 0.01, 0.01]
         }
     }
+    scene_dict['new_sphere'] = {
+        "type": "sphere",
+        "radius": 0.1,
+        "to_world": mi.ScalarTransform4f().translate(mi.ScalarPoint3f([-0.8, 0, -2.88])),
+        "bsdf": {
+                    "type": "diffuse",
+                    "reflectance": {
+                        "type": "rgb",
+                        "value": [1, 0, 0]
+                    }
+                },
+        }
     scene = mi.load_dict(scene_dict)
 
 
-def get_select_obj(evt: gr.SelectData, interactive_state: gr.State) -> gr.State:
+def get_select_obj(evt: gr.SelectData, selected_obj_state: gr.State) -> gr.State:
     select_index = evt.index
-    interactive_state["src_obj_path"] = example_image_paths[select_index].replace("image.jpg", "normalized_model.obj")
-    interactive_state["src_obj_name"] = example_image_paths[select_index].split('/')[1]
-    return interactive_state
+    selected_obj_state['obj_name'] = example_image_paths[select_index].split('/')[1]
+    selected_obj_state['obj_path'] = example_image_paths[select_index].replace("image.jpg", "normalized_model.obj")
 
+    return selected_obj_state
+
+def get_pixel_coord(evt: gr.SelectData):
+    return evt.index
 
 def main():
     initialize()
@@ -79,8 +95,6 @@ def main():
         scene_dict = gr.State()
         interactive_state = gr.State({
             "src_img": None,
-            "src_obj_path": None,
-            "src_obj_name": None,
             "albedo": None,
             "dif_shd": None,
             "edge_mask": None,
@@ -88,7 +102,12 @@ def main():
             "depth_wo_obj": None,
             "rgb_wo_obj": None,
             "rgb_w_obj": None,
+            "aov_out": None,
         })
+
+        auto_rescale_factor = gr.State() # rescale 3D object when inserted
+        object_states = gr.State([])    # list of object state {"obj_name", "obj_path", "position", "rotation", "scale"}
+        selected_obj_state = gr.State({})   # selected object information {"obj_name", "obj_path"}
 
         gr.HTML(
             """
@@ -100,48 +119,16 @@ def main():
             </div>
             """)
 
-
         with gr.Row():
             with gr.Column(scale=1):
-                with gr.Tab("Input Image"):
-                    src_image_path = gr.Image()
-                    btn_1 = gr.Button("Start", interactive=False)
-                    with gr.Accordion("Advanced Options", open=False):
-                        gen_scale = gr.Slider(minimum=0.1, maximum=1.0, value=0.4, step=0.05, label="Scaling Factor", info="An image will be scaled down for faster process")
-                    
-                with gr.Tab("Object Insertion", elem_id='sidebar'):
-                    with gr.Group():
-                        gr.HTML("""<div align="center">Translation</div>""")
-                        translation_x = gr.Slider(minimum=-10, maximum=10, value=0, label="translation_x")
-                        translation_y = gr.Slider(minimum=-10, maximum=10, value=0, label="translation_y")
-                        translation_z = gr.Slider(minimum=-10, maximum=10, value=0, label='translation_z')
-
-                    with gr.Group():
-                        gr.HTML("""<div align="center">Rotation (degree)</div>""")
-                        rotation_x = gr.Slider(minimum=-180, maximum=180, value=0, label="rotation_x")
-                        rotation_y = gr.Slider(minimum=-180, maximum=180, value=0, label="rotation_y")
-                        rotation_z = gr.Slider(minimum=-180, maximum=180, value=0, label='rotation_z')
-                    with gr.Group():
-                        gr.HTML("""<div align="center">Scale</div>""")
-                        scale_uni = gr.Checkbox(label='Uniform', value=True, interactive=True)
-                        scale_x = gr.Slider(minimum=0.1, maximum=10, value=1, label="scale_x", step=0.1)
-                        scale_y = gr.Slider(minimum=0.1, maximum=10, value=1, label="scale_y", step=0.1)
-                        scale_z = gr.Slider(minimum=0.1, maximum=10, value=1, label="scale_z", step=0.1)
-                        scale_x.release(fn=lambda x,y,z,b: [x,x,x] if b else [x,y,z], inputs=[scale_x, scale_y, scale_z, scale_uni], outputs=[scale_x, scale_y, scale_z])
-                        scale_y.release(fn=lambda x,y,z,b: [y,y,y] if b else [x,y,z], inputs=[scale_x, scale_y, scale_z, scale_uni], outputs=[scale_x, scale_y, scale_z])
-                        scale_z.release(fn=lambda x,y,z,b: [z,z,z] if b else [x,y,z], inputs=[scale_x, scale_y, scale_z, scale_uni], outputs=[scale_x, scale_y, scale_z])
-                    with gr.Group():
-                        gr.HTML("""<div align="center">Differential Compositing Weight</div>""")
-                        compose_weight = gr.Slider(minimum=0.01, maximum=2, value=1.0, label="weight", step=0.01)
-
-                    btn_2 = gr.Button("Insert", interactive=False)
-            with gr.Column(scale=2):
-                res_image = gr.Image()
-                btn_3 = gr.Button("Render")
-            
-            with gr.Column(scale=1):
-                with gr.Tab('Input Image Presets'):
-                    with gr.Column():
+                with gr.Tabs() as input_tab:
+                    with gr.TabItem("Input Image", id=0):
+                        src_image_path = gr.Image()
+                        with gr.Accordion("Advanced Options", open=False):
+                            gen_scale = gr.Slider(minimum=0.1, maximum=1.0, value=0.4, step=0.05, label="Scaling Factor", info="An image will be scaled down for faster process")
+                            hr_spp = gr.Slider(minimum=512, maximum=4096, value=1024, step=512, label="High Quality spp")
+                        btn_1 = gr.Button("Start", interactive=False)
+                        src_image_path.change(fn=lambda x: gr.update(interactive=False, variant='secondary') if x is None else gr.update(interactive=True, variant='primary'), inputs=src_image_path, outputs=btn_1)
                         gr.Examples(
                             label='Select an image from presets',
                             examples=[
@@ -150,34 +137,124 @@ def main():
                             ],
                             inputs=src_image_path,
                         )
-                with gr.Tab('3D Object Presets'):
-                    gr.Markdown("### Select a 3D object by clicking its image:")
-                    gallery = gr.Gallery(
-                        value=example_image_paths,  # Single images per row
-                        label="Example Objects",
-                        show_label=False,
-                        columns=2,  # Display images in 2 columns
-                        height="auto",
-                        object_fit="contain",
-                        allow_preview=False
-                    )
 
-        src_image_path.change(fn=lambda x: gr.Button("Start", interactive=False, variant='secondary') if x is None else gr.Button("Start", interactive=True, variant='primary'), inputs=src_image_path, outputs=btn_1)
+                    with gr.TabItem("Input 3D Object", id=1):
+                        gr.Markdown("### Insert a 3D object from presets")
+                        gr.Markdown("After selecting, click on the desired location in the image")
+
+                        gallery = gr.Gallery(
+                            value=example_image_paths,  # Single images per row
+                            label="Example Objects",
+                            show_label=False,
+                            columns=2,  # Display images in 2 columns
+                            height="auto",
+                            object_fit="contain",
+                            allow_preview=False
+                        )
+                        gallery.select(get_select_obj, inputs=selected_obj_state, outputs=selected_obj_state)
+                    
+            with gr.Column(scale=2):
+                res_image = gr.Image()
+                btn_3 = gr.Button("Render", variant='primary')
+                compose_weight = gr.Slider(minimum=0, maximum=2, value=1.0, label="Differential Compoiting Weight", step=0.01)
+                
+                btn_3.click(render, inputs=[scene_dict, interactive_state, gr.State(1), hr_spp, compose_weight, object_states], outputs=[res_image])
+
+                coord2D = gr.State()
+                coords3D = gr.State()
+                normal3D = gr.State()
+                
+            
+            with gr.Column(scale=1):
+                btn_2 = gr.Button("Update", interactive=False)
+
+                # list of 3d objects in the scene
+                @gr.render(inputs=[object_states])
+                def show_objects(objects):
+                    def updateState(new_value, obj_index, type, xyz_index):
+                        objects[obj_index][type][xyz_index] = new_value
+                        return objects
+                    def removeObj(obj_index):
+                        objects.pop(obj_index)
+                        return objects
+                    
+                    print('there are ', len(objects), ' objects')
+                    type_position = gr.State('position')
+                    type_rotation = gr.State('rotation')
+                    type_scale = gr.State('scale')
+                    x_index = gr.State(0)
+                    y_index = gr.State(1)
+                    z_index = gr.State(2)
+                    
+                    for i in range(len(objects)):
+                        obj_index = gr.Number(i, visible=False)
+                        obj = objects[i]
+                        with gr.Accordion(obj['obj_name']):
+                            gr.HTML("""<div align="center">Position</div>""")
+                            pos = obj['position']
+                            pos_x_slider = gr.Slider(minimum=-10, maximum=10, value=pos[0], label="position_x")
+                            pos_y_slider = gr.Slider(minimum=-10, maximum=10, value=pos[1], label="position_y")
+                            pos_z_slider = gr.Slider(minimum=-10, maximum=10, value=pos[2], label='position_z')
+                            pos_x_slider.change(updateState, inputs=[pos_x_slider, obj_index, type_position, x_index], outputs=[object_states])
+                            pos_y_slider.change(updateState, inputs=[pos_y_slider, obj_index, type_position, y_index], outputs=[object_states])
+                            pos_z_slider.change(updateState, inputs=[pos_z_slider, obj_index, type_position, z_index], outputs=[object_states])
+
+                            gr.HTML("""<div align="center">Rotation (degree)</div>""")
+                            rotation = obj['rotation']
+                            rotation_x_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[0], label="rotation_x")
+                            rotation_y_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[1], label="rotation_y")
+                            rotation_z_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[2], label='rotation_z')
+                            rotation_x_slider.change(updateState, inputs=[rotation_x_slider, obj_index, type_rotation, x_index], outputs=[object_states])
+                            rotation_y_slider.change(updateState, inputs=[rotation_y_slider, obj_index, type_rotation, y_index], outputs=[object_states])
+                            rotation_z_slider.change(updateState, inputs=[rotation_z_slider, obj_index, type_rotation, z_index], outputs=[object_states])
+
+                            gr.HTML("""<div align="center">Scale</div>""")
+                            scale = obj['scale']
+                            scale_x_slider = gr.Slider(minimum=0.1, maximum=10, value=scale[0], label="scale_x", step=0.1)
+                            scale_y_slider = gr.Slider(minimum=0.1, maximum=10, value=scale[1], label="scale_y", step=0.1)
+                            scale_z_slider = gr.Slider(minimum=0.1, maximum=10, value=scale[2], label="scale_z", step=0.1)
+                            scale_x_slider.change(updateState, inputs=[scale_x_slider, obj_index, type_scale, x_index], outputs=[object_states])
+                            scale_y_slider.change(updateState, inputs=[scale_y_slider, obj_index, type_scale, y_index], outputs=[object_states])
+                            scale_z_slider.change(updateState, inputs=[scale_z_slider, obj_index, type_scale, z_index], outputs=[object_states])
+
+                            remove_btn = gr.Button("Remove")
+                            remove_btn.click(removeObj, obj_index, object_states)
+            
+        def isSelected(x):
+            print(x)
+            print(x!={})
+            return x!={}
+        
+        # start button
         btn_1.click(
                 fn=generate_3D_mesh, 
-                inputs=[src_image_path, gen_scale, scene_dict, interactive_state], 
-                outputs=[res_image, scene_dict, interactive_state]
+                inputs=[src_image_path, gen_scale, scene_dict, interactive_state, hr_spp], 
+                outputs=[res_image, scene_dict, interactive_state, auto_rescale_factor]
+            ).then(
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], [res_image]
             ).then(
                 lambda: gr.update(interactive=True, variant='primary'), 
                 outputs=btn_2
+            ).then(
+                lambda _: gr.Tabs(selected=1), outputs=input_tab
             )
 
-        gallery.select(get_select_obj, inputs=interactive_state, outputs=interactive_state)
-        btn_2.click(fn=insert_object, inputs=[scene_dict, interactive_state, translation_x, translation_y, translation_z, \
-                                              rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z, compose_weight], outputs=[scene_dict, res_image])
         
-        btn_3.click(fn=render, inputs=[scene_dict, interactive_state], outputs=res_image,)
-            
+        res_image.select(get_pixel_coord, None, [coord2D]).then( # object insertion from clicking image
+                get_position_normal, [scene_dict, coord2D], [coords3D, normal3D]
+            ).then(
+                isSelected, selected_obj_state
+            ).success(
+                insert_object, [object_states, selected_obj_state, coords3D, auto_rescale_factor], outputs=[object_states]
+            ).then(
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], [res_image]
+            )
+        
+        
+        
+        btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], outputs=[res_image])
+        
+        # btn_3.click(fn=render, inputs=[scene_dict, interactive_state, render_sensor, compose_weight, hr_spp], outputs=res_image,)
 
     gui.launch()
 
