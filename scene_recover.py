@@ -102,7 +102,7 @@ def geometry_reconstruction(moge_model: MoGeModel, image: np.ndarray, height: in
     return intrinsics, mask, sky_comp_mask, edge_mask
 
 
-def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height: int, width: int, grid_size: int, margin: int):
+def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height: int, width: int):
     mi.set_variant('cuda_ad_rgb') # can be set to llvm_ad_rgb for CPU rendering
 
     # load the .ply file
@@ -172,8 +172,8 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
     scene_dict = {
         'type': 'scene',
         'integrator': {
-            'type': 'aov',
-            'aovs': 'pos:position, normal:sh_normal',
+            'type': 'path',
+            'max_depth': 3
         },
         'sensor1': cam_dict1,
         'sensor2': cam_dict2,
@@ -181,78 +181,118 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
             'type': 'envmap',
             'bitmap' : mi.Bitmap(np.ones((128, 256, 3)) * 1),
         },
-        'scene_mesh': mesh
+        'scene_mesh': mesh,
+        'sampler': {
+            'type': 'orthogonal'
+        }
     }
 
+    return scene_dict
+
+
+def optimize_light(scene_dict, target, mask, lights_mask):
+    scene_dict = scene_dict.copy()
     scene = mi.load_dict(scene_dict)
 
-    # # render the position uv for each pixel
-    aov_out = mi.render(scene, spp=1)
-    positions = aov_out[:, :, :3]
-    normals = aov_out[:, :, 3:6]
+    sub_w, sub_h = scene.sensors()[0].film().crop_size()
 
-    # create a grid of evenly spaced values in image space (with some margin)
-    im_grid = np.meshgrid(np.linspace(margin, sub_w-(margin), grid_size), np.linspace(margin, sub_h-(margin), grid_size))
+    "Calculate connected regions of the input mask"
+    lights_mask = resize(lights_mask, [sub_h, sub_w])
+    binary_mask = (lights_mask[:, :, 3] > 0).astype(np.uint8)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_mask)
 
+    connected_areas = []
+    pixel_areas = {}
+    for i in range(1, num_labels):  # Skip background (label 0)
+        x, y, w, h, area = stats[i]
+        cx, cy = centroids[i]
+        connected_areas.append({"label": i, "bbox": (x, y, w, h), "centroid": (cx, cy), "area": area})
+
+        pixel_indices = np.argwhere(labels == i)  # Get pixel coordinates
+        pixel_areas[i] = pixel_indices  # Store pixels for each label
+
+    
+    "Update scene dict with initial lights"
     pl_count = 0
-    for i, (im_x, im_y) in enumerate(zip(im_grid[0].flatten(), im_grid[1].flatten())):
+    temp_dict_0 = {}
+    if len(connected_areas) == 0: # if no estimated light source input
+        print("Estimated Lighting Not Specified")
+        grid_size = 4 # size of point light grid (grid_size x grid_size)
+        margin = 50 # margin around the image for the grid
 
-        # get the 3D position of the point in world space
-        pos = np.array(positions[int(im_y) - 1, int(im_x) - 1])
-        nrm = np.array(normals[int(im_y) - 1, int(im_x) - 1])
-        # here I'm backing the lights a bit off the surface towards the camera
-        # a better way would be to render out the normals in the AOV pass, then use those
-        pos += nrm * 0.05
-        print(pos)
-        # create RGB point lights for each grid location, make them dim
-        scene_dict[f'pointlight_{pl_count}'] = {
-            'type': 'point',
-            'position': list(pos),
-            'intensity': {
-                'type': 'rgb',
-                'value': [0.01, 0.01, 0.01]
+        aov_out = render_position_and_normal(scene_dict, sensor=0)
+
+        positions = aov_out[:, :, :3]
+        normals = aov_out[:, :, 3:6]
+        # create a grid of evenly spaced values in image space (with some margin)
+        im_grid = np.meshgrid(np.linspace(margin, sub_w-(margin), grid_size), np.linspace(margin, sub_h-(margin), grid_size))
+
+        for i, (im_x, im_y) in enumerate(zip(im_grid[0].flatten(), im_grid[1].flatten())):
+
+            # get the 3D position of the point in world space
+            pos = np.array(positions[int(im_y) - 1, int(im_x) - 1])
+            nrm = np.array(normals[int(im_y) - 1, int(im_x) - 1])
+            # here I'm backing the lights a bit off the surface towards the camera
+            # a better way would be to render out the normals in the AOV pass, then use those
+            pos += nrm * 0.05
+            print(pos)
+            # create RGB point lights for each grid location, make them dim
+            scene_dict[f'pointlight_{pl_count}'] = {
+                'type': 'point',
+                'position': list(pos),
+                'intensity': {
+                    'type': 'rgb',
+                    'value': [0.01, 0.01, 0.01]
+                }
             }
-        }
-        pl_count += 1
+            pl_count += 1
 
+    else:
+        # get the positions of lights inserted
+        space = 0.03
+        for label, pixels in pixel_areas.items():
+            # print(f"Label {label}: {pixels.shape[0]} pixels")  # Number of pixels per area
 
-    # we render the scene with the path tracer integrator,
-    # I set the max depth to 2 to speed up the render, but this can be experimented with
+            # choole pixels
+            num_samples = 10 
+            step = max(1, len(pixels) // num_samples)  # Adjust step size based on density
+            sampled_pixels = pixels[::step]  # Select every 'step' pixel
+
+            for i in range(num_samples):
+                # print("sampled pixels: ", sampled_pixels[i])
+                coord = sampled_pixels[i].astype(int).tolist()
+                coord[0], coord[1] = coord[1], coord[0]
+                position, normal = get_position_normal(scene_dict, coord, 0) # get location and normal for each pixel
+                if position is None: continue
+                scene_dict[f'pointlight_{pl_count}'] = {
+                    'type': 'point',
+                    'position': np.array(list(position + space*normal)) * np.array([-1, 1, -1]),
+                    'intensity': {
+                        'type': 'rgb',
+                        'value': [0.08, 0.08, 0.08]
+                    }
+                }
+                pl_count += 1
+
+    "Optimize lights"
+    # region
     scene_dict['integrator'] = {
-        'type': 'path',
-        'max_depth': 3
-    }
-
-    scene_dict['sampler'] = {
-        'type': 'orthogonal',
-    }
-
-    #scene = mi.load_dict(scene_dict)
-    #scene_params = mi.traverse(scene)
-
-    #test_render = mi.render(scene, sensor=1, spp=64)
-
-    #show(test_render)
-
-
-    aov_out = render_position_and_normal(scene_dict)
-    #print(scene_dict)
-    return scene_dict, aov_out
-
-
-def optimize_light(scene, target, mask, grid_size: int):
-    # we optimize the light positions and intensities along side the environment map
-
+            'type': 'path',
+            'max_depth': 3
+        }
+    scene = mi.load_dict(scene_dict)
     params = mi.traverse(scene)
 
+    print(scene_dict)
     keys = []
-    for i in range(grid_size ** 2):
+    for i in range(pl_count):
         keys.append(f'pointlight_{i}.position')
         keys.append(f'pointlight_{i}.intensity.value')
     keys.append('envmap.data')
     learning_rate = 0.01
     opt = mi.ad.Adam(lr=learning_rate, mask_updates=True, beta_1=0.8)
     for k in keys:
+        dr.enable_grad(params[k])
         opt[k] = params[k]
 
     # optimization
@@ -270,6 +310,8 @@ def optimize_light(scene, target, mask, grid_size: int):
 
         # Perform a (noisy) differentiable rendering of the scene
         rendered = mi.render(scene, params, spp=curr_spp)
+        # plt.imshow(rendered)
+        # plt.savefig(f"result/iteration/{it}.png")
 
         # Evaluate the objective function from the current rendered image
         loss = mse(
@@ -280,7 +322,6 @@ def optimize_light(scene, target, mask, grid_size: int):
 
         # Backpropagate through the rendering process
         dr.backward(loss)
-
         opt.step()
 
         # ensure that light intensities stay positive
@@ -300,7 +341,24 @@ def optimize_light(scene, target, mask, grid_size: int):
             break
 
         print(f"Iteration {it:02d}: {loss}", end='\r')
-    return params
+    # endregion
+
+    light_dict = {}
+
+    for key in scene_dict.keys():
+        if key.find("pointlight") != -1:
+            light_dict[key] = {
+                'type': 'point',
+                'position': list(np.asarray(params[key + '.position']).flatten()),
+                'intensity': {
+                    'type': 'rgb',
+                    'value': list(np.asarray(params[key + '.intensity.value']).flatten())
+                }
+            }
+    opt_envmap_data = params['envmap.data'].numpy()
+    
+    print("\nLighting optimized")
+    return light_dict, opt_envmap_data
 
 def state2dict(object_state):
     """
@@ -397,7 +455,7 @@ def insert_object(object_states, new_object, position, scale=1):
     return object_states
 
 
-def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_state, hr_spp=4096):
+def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_state, lights_mask, hr_spp=4096 ):
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
@@ -408,13 +466,14 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
     # img = load_image(img_path)
     # img = load_from_url(img_path)
     img = img.astype(np.single) / float((2 ** 8) - 1)
-    print(img)
+    # print(img)
     img = rescale(img, rescale_factor)
     interactive_state["src_img"] = img
 
     image, albedo, dif_shd = intrinsic_decomposition(intrinsic_model, img)
     interactive_state["albedo"] = albedo
     interactive_state["dif_shd"] = dif_shd
+
     # rescale image for optimizing lighting conditions
     height, width = image.shape[:2]
     sub_h = math.ceil(height * sub_scale)
@@ -430,38 +489,29 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
 
     print("Geometry constructed")
 
-    grid_size = 4 # size of point light grid (grid_size x grid_size)
-    margin = 50 # margin around the image for the grid
-    scene_dict, interactive_state["aov_out"] = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width, grid_size, margin)
+    scene_dict = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width)
+
+    print("scene dictionary constructed")
 
     # setup optimization target
     np_target = sub_dif_shd * sub_alb # the optimization target is the diffuse image
-
     target = mi.TensorXf(np_target)
 
-    optimized_params = optimize_light(mi.load_dict(scene_dict), target, mask, grid_size)
-
-    for key in scene_dict.keys():
-        if key.find("pointlight") != -1:
-            scene_dict[key] = {
-                'type': 'point',
-                'position': list(np.asarray(optimized_params[key + '.position']).flatten()),
-                'intensity': {
-                    'type': 'rgb',
-                    'value': list(np.asarray(optimized_params[key + '.intensity.value']).flatten())
-                }
-            }
-
-    # It seems like optimizer also refines envmap?
-    # I'm not sure if we should include this:
-    opt_envmap_data = optimized_params['envmap.data'].numpy()
+    light_dict, opt_envmap_data = optimize_light(scene_dict, target, mask, lights_mask["layers"][0])
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
-    print("\nLighting optimized")
+    scene_dict = scene_dict | light_dict
+    
 
     inpainted_render = render(scene_dict, interactive_state, 1, hr_spp, 0)
+    print("rgb_wo_obj done")
     depth_wo_obj = render_depth(scene_dict, 48)
+    print("depth_wo_obj done")
     interactive_state["depth_wo_obj"] = depth_wo_obj
     interactive_state["rgb_wo_obj"] = inpainted_render
+
+    # lights_mask = lights_mask["layers"][0]
+    
+
     return None, scene_dict, interactive_state, auto_rescale_factor(mi.load_dict(scene_dict))
 
 def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_weight=0, object_states=[]):
@@ -475,12 +525,13 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
         'max_depth': 3
     }
 
+    # insert objects
     object_dict = {}
     for obj_state in object_states:
         object_dict.update(state2dict(obj_state))
-
     composed_scene_dict = scene_dict | object_dict
 
+    
     scene = mi.load_dict(composed_scene_dict)
     rendered_insert = mi.render(scene, mi.traverse(scene), sensor=sensor_id, spp=spp)
     inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
@@ -509,11 +560,11 @@ def render_depth(scene_dict, spp=48):
     rendered_depth = mi.render(scene, sensor=1, spp=spp)
     return np.array(rendered_depth)
 
-def render_position_and_normal(scene_dict, spp=48):
+def render_position_and_normal(scene_dict, spp=48, sensor=1):
     _scene_dict = scene_dict.copy()
     _scene_dict['integrator'] = {'type': 'aov', 'aovs': 'pos:position, normal:sh_normal'}
     scene = mi.load_dict(_scene_dict)
-    aov_out = mi.render(scene, sensor=1, spp=spp)
+    aov_out = mi.render(scene, sensor=sensor, spp=spp)
     return aov_out
 
 def differential_compositing(ori_img, recon_img, insert_img, mask, weight):
@@ -524,10 +575,9 @@ def differential_compositing(ori_img, recon_img, insert_img, mask, weight):
 def get_position_normal(scene_dict, pixel_coord, sensor_id=1):
     x, y = pixel_coord
     scene = mi.load_dict(scene_dict)
-    camera = scene.sensors()[1]
+    camera = scene.sensors()[sensor_id]
     film = camera.film()
     resolution = film.crop_size()
-
 
     import random
     sample1 = random.random()
@@ -539,10 +589,9 @@ def get_position_normal(scene_dict, pixel_coord, sensor_id=1):
 
     if intersection.is_valid():
         position = (np.array(intersection.p)).flatten() * [-1,1,-1]
-        normal = dr.normalize(intersection.n)
+        normal = (np.array(dr.normalize(intersection.n))).flatten() * [-1,1,-1]
         return position, normal
     else:
-        print("no intersection")
         return None, None
 
 

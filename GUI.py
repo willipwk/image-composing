@@ -5,6 +5,15 @@ import numpy as np
 import drjit
 import json
 
+from chrislib.general import rescale
+def auto_sacle(img, factor):
+    img = img.astype(np.single) / float((2 ** 8) - 1)
+    img = rescale(img, factor)
+    img = rescale(img, 0.5)
+    shape = img.shape
+    print("size: ", shape[:2])
+    return img, shape[:2]
+
 
 example_image_paths = ["assets/tree/image.jpg", "assets/bag/image.jpg", "assets/bear/image.jpg", "assets/cage/image.jpg", \
                        "assets/chair/image.jpg", "assets/desk/image.jpg", "assets/lamp/image.jpg", "assets/plant/image.jpg", \
@@ -94,7 +103,7 @@ def main():
     intrinsic_model = load_models('v2')
 
     with gr.Blocks(theme=gr.themes.Base()) as gui:
-        scene_dict = gr.State()
+        scene_dict = gr.State() # geometry of the input
         interactive_state = gr.State({
             "src_img": None,
             "albedo": None,
@@ -131,7 +140,7 @@ def main():
                             gen_scale = gr.Slider(minimum=0.1, maximum=1.0, value=0.4, step=0.05, label="Scaling Factor", info="An image will be scaled down for faster process")
                             hr_spp = gr.Slider(minimum=512, maximum=4096, value=1024, step=512, label="High Quality spp")
                         btn_1 = gr.Button("Start", interactive=False)
-                        src_image_path.change(fn=lambda x: gr.update(interactive=False, variant='secondary') if x is None else gr.update(interactive=True, variant='primary'), inputs=src_image_path, outputs=btn_1)
+                        
                         gr.Examples(
                             label='Select an image from presets',
                             examples=[
@@ -157,9 +166,22 @@ def main():
                         gallery.select(get_select_obj, inputs=selected_obj_state, outputs=selected_obj_state)
                     
             with gr.Column(scale=2):
-                res_image = gr.Image()
-                btn_3 = gr.Button("Render", variant='primary')
-                compose_weight = gr.Slider(minimum=0, maximum=2, value=1.0, label="Differential Compositing Weight", step=0.01)
+                with gr.Tabs() as render_tab:
+                    with gr.TabItem("Rendered Image", id=0):
+                        res_image = gr.Image()
+                        btn_3 = gr.Button("Render", variant='primary')
+                        compose_weight = gr.Slider(minimum=0, maximum=2, value=0, label="Differential Compositing Weight", step=0.01)
+
+                    with gr.TabItem("Lighting Estimation", id=1):
+                        gr.Markdown("### Let's estimate lighting environment in the image")
+                        gr.Markdown("The geometry of the image has been constructed. Please mark the light sources you identify on the left image.\nIf no input was given, light sources are evenly placed in the scene.")
+                        temp_image = gr.ImageEditor(interactive=True, layers=False, sources=None)
+                        temp = gr.State()
+                        temp_size = gr.State()
+                        src_image_path.change(auto_sacle, [src_image_path, gen_scale], [temp, temp_size]).then(
+                            lambda x, y: {'background':x, 'composite':x, 'layers':[np.zeros((y[0], y[1], 4), np.uint8)]}, [temp, temp_size], temp_image
+                        )
+
                 
                 btn_3.click(render, inputs=[scene_dict, interactive_state, gr.State(1), hr_spp, compose_weight, object_states], outputs=[res_image])
 
@@ -230,18 +252,20 @@ def main():
             print(x!={})
             return x!={}
         
-        # start button
+        src_image_path.change(fn=lambda x: gr.update(interactive=False, variant='secondary') if x is None else gr.update(interactive=True, variant='primary'), inputs=src_image_path, outputs=btn_1).then(
+                lambda _: gr.Tabs(selected=1), outputs=render_tab    
+            )
+        btn_1.click(lambda _: gr.Tabs(selected=0), outputs=render_tab)
         btn_1.click(
                 fn=generate_3D_mesh, 
-                inputs=[model_states, src_image_path, gen_scale, scene_dict, interactive_state, hr_spp], 
+                inputs=[model_states, src_image_path, gen_scale, scene_dict, interactive_state, temp_image, hr_spp], 
                 outputs=[res_image, scene_dict, interactive_state, auto_rescale_factor]
             ).then(
-                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image]
-            ).then(
-                lambda: gr.update(interactive=True, variant='primary'), 
-                outputs=btn_2
-            ).then(
                 lambda _: gr.Tabs(selected=1), outputs=input_tab
+            ).then(
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], [res_image]
+            ).then(
+                lambda _: gr.update(interactive=True, variant='primary'), outputs=[btn_2]
             )
 
         # insert object
@@ -249,7 +273,7 @@ def main():
                 get_position_normal, [scene_dict, coord2D], [coords3D, normal3D]
             ).then(
                 isSelected, selected_obj_state
-            ).success(
+            ).then(
                 insert_object, [object_states, selected_obj_state, coords3D, auto_rescale_factor], outputs=[object_states]
             ).then(
                 render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image]
