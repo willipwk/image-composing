@@ -90,34 +90,6 @@ def ply_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
     return shape_dict
 
 
-def ply_mesh_texture(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
-    shape_dict = {
-        'type': 'ply', 
-        'filename': mesh_path
-    }
-
-    if transform:
-        shape_dict['to_world'] = mi.ScalarTransform4f().look_at(
-        mi.ScalarPoint3f(transform),  # camera at origin
-        mi.ScalarPoint3f([0, 0, -1]), 
-        mi.ScalarPoint3f([0, 1, 0])
-    )
-    
-    if bsdf:
-        shape_dict['bsdf'] = bsdf
-    else:
-        shape_dict['bsdf'] = {
-            'type': 'diffuse',
-            'reflectance': 
-            {
-                'type': 'bitmap',
-                'filename': 'assets/tree/texture.png'
-            }
-        }
-    
-    return shape_dict
-
-
 def obj_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None, texture_path=None):
     shape_dict = {
         'type': 'obj', 
@@ -126,10 +98,10 @@ def obj_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None, te
 
     if transform:
         shape_dict['to_world'] = mi.ScalarTransform4f().look_at(
-        mi.ScalarPoint3f(transform),  # camera at origin
-        mi.ScalarPoint3f([0, 0, -1]), 
-        mi.ScalarPoint3f([0, 1, 0])
-    )
+            mi.ScalarPoint3f(transform),  # camera at origin
+            mi.ScalarPoint3f([0, 0, -1]), 
+            mi.ScalarPoint3f([0, 1, 0])
+        )
     
     if bsdf:
         shape_dict['bsdf'] = bsdf

@@ -44,9 +44,9 @@ from typing import Tuple
 from utils import *
 
 
-def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def intrinsic_decomposition(intrinsic_model, img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     # intrinsic decomposition
-    intrinsic_model = load_models('v2')
+
 
     intrinsic_result = run_pipeline(
         intrinsic_model,
@@ -63,9 +63,9 @@ def intrinsic_decomposition(img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return image, albedo, dif_shd
 
 
-def geometry_reconstruction(image: np.ndarray, height: int, width: int, sub_h: int, sub_w: int, albedo: np.ndarray, device: str, threshold: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def geometry_reconstruction(moge_model: MoGeModel, image: np.ndarray, height: int, width: int, sub_h: int, sub_w: int, albedo: np.ndarray, device: str, threshold: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # recover geometry
-    moge_model = MoGeModel.from_pretrained('Ruicheng/moge-vitl').to('cuda').eval()
+    
     image_tensor = torch.tensor(image, dtype=torch.float32, device=device).permute(2, 0, 1)
     output = moge_model.infer(image_tensor ** (1/2.2))
     points, depth, mask, intrinsics = output['points'].cpu().numpy(), output['depth'].cpu().numpy(), output['mask'].cpu().numpy(), output['intrinsics'].cpu().numpy()
@@ -256,7 +256,7 @@ def optimize_light(scene, target, mask, grid_size: int):
         opt[k] = params[k]
 
     # optimization
-    MAX_ITERATIONS = 20
+    MAX_ITERATIONS = 150
     errors = []
     curr_loss = float('inf')
     best_loss = float('inf')
@@ -397,10 +397,12 @@ def insert_object(object_states, new_object, position, scale=1):
     return object_states
 
 
-def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state, hr_spp=4096):
+def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_state, hr_spp=4096):
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
+    intrinsic_model = model_states["intrinsic_model"]
+    moge_model = model_states["moge_model"]
 
     # prepare image
     # img = load_image(img_path)
@@ -410,7 +412,7 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state, hr_spp=
     img = rescale(img, rescale_factor)
     interactive_state["src_img"] = img
 
-    image, albedo, dif_shd = intrinsic_decomposition(img)
+    image, albedo, dif_shd = intrinsic_decomposition(intrinsic_model, img)
     interactive_state["albedo"] = albedo
     interactive_state["dif_shd"] = dif_shd
     # rescale image for optimizing lighting conditions
@@ -422,7 +424,7 @@ def generate_3D_mesh(img, rescale_factor, scene_dict, interactive_state, hr_spp=
     sub_dif_shd = resize(dif_shd, (sub_h, sub_w))
     sub_img = resize(image, (sub_h, sub_w))
 
-    cam_intrinsics, mask, sky_comp_mask, edge_mask = geometry_reconstruction(sub_img, height, width, sub_h, sub_w, albedo, device, threshold)
+    cam_intrinsics, mask, sky_comp_mask, edge_mask = geometry_reconstruction(moge_model, sub_img, height, width, sub_h, sub_w, albedo, device, threshold)
     interactive_state["sky_comp_mask"] = sky_comp_mask
     interactive_state["edge_mask"] = edge_mask
 

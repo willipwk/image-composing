@@ -90,6 +90,8 @@ def get_pixel_coord(evt: gr.SelectData):
 
 def main():
     initialize()
+    moge_model = MoGeModel.from_pretrained('Ruicheng/moge-vitl').to('cuda').eval()
+    intrinsic_model = load_models('v2')
 
     with gr.Blocks(theme=gr.themes.Base()) as gui:
         scene_dict = gr.State()
@@ -108,6 +110,7 @@ def main():
         auto_rescale_factor = gr.State() # rescale 3D object when inserted
         object_states = gr.State([])    # list of object state {"obj_name", "obj_path", "position", "rotation", "scale"}
         selected_obj_state = gr.State({})   # selected object information {"obj_name", "obj_path"}
+        model_states = gr.State({"moge_model": moge_model, "intrinsic_model": intrinsic_model})
 
         gr.HTML(
             """
@@ -230,10 +233,10 @@ def main():
         # start button
         btn_1.click(
                 fn=generate_3D_mesh, 
-                inputs=[src_image_path, gen_scale, scene_dict, interactive_state, hr_spp], 
+                inputs=[model_states, src_image_path, gen_scale, scene_dict, interactive_state, hr_spp], 
                 outputs=[res_image, scene_dict, interactive_state, auto_rescale_factor]
             ).then(
-                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], [res_image]
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image]
             ).then(
                 lambda: gr.update(interactive=True, variant='primary'), 
                 outputs=btn_2
@@ -249,10 +252,10 @@ def main():
             ).success(
                 insert_object, [object_states, selected_obj_state, coords3D, auto_rescale_factor], outputs=[object_states]
             ).then(
-                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], [res_image]
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image]
             )
         
-        btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], outputs=[res_image])
+        btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], outputs=[res_image])
         
         # btn_3.click(fn=render, inputs=[scene_dict, interactive_state, render_sensor, compose_weight, hr_spp], outputs=res_image,)
 
