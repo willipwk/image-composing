@@ -198,9 +198,9 @@ def main():
                                 pos_x_slider = gr.Slider(minimum=-5, maximum=5, value=pos[0], step=0.01, label="position_x")
                                 pos_y_slider = gr.Slider(minimum=-5, maximum=5, value=pos[1], step=0.01, label="position_y")
                                 pos_z_slider = gr.Slider(minimum=-5, maximum=5, value=pos[2], step=0.01, label='position_z')
-                                pos_x_slider.change(updateState, inputs=[pos_x_slider, obj_index, type_position, x_index])
-                                pos_y_slider.change(updateState, inputs=[pos_y_slider, obj_index, type_position, y_index])
-                                pos_z_slider.change(updateState, inputs=[pos_z_slider, obj_index, type_position, z_index])
+                                pos_x_slider.change(updateState, inputs=[pos_x_slider, obj_index, type_position, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                pos_y_slider.change(updateState, inputs=[pos_y_slider, obj_index, type_position, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                pos_z_slider.change(updateState, inputs=[pos_z_slider, obj_index, type_position, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
 
                             # gr.HTML("""<div align="center">Rotation (degree)</div>""")
                             with gr.Group():
@@ -208,9 +208,9 @@ def main():
                                 rotation_x_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[0], label="rotation_x")
                                 rotation_y_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[1], label="rotation_y")
                                 rotation_z_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[2], label='rotation_z')
-                                rotation_x_slider.change(updateState, inputs=[rotation_x_slider, obj_index, type_rotation, x_index])
-                                rotation_y_slider.change(updateState, inputs=[rotation_y_slider, obj_index, type_rotation, y_index])
-                                rotation_z_slider.change(updateState, inputs=[rotation_z_slider, obj_index, type_rotation, z_index])
+                                rotation_x_slider.change(updateState, inputs=[rotation_x_slider, obj_index, type_rotation, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                rotation_y_slider.change(updateState, inputs=[rotation_y_slider, obj_index, type_rotation, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                rotation_z_slider.change(updateState, inputs=[rotation_z_slider, obj_index, type_rotation, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
 
                             # gr.HTML("""<div align="center">Scale</div>""")
                             with gr.Group():
@@ -218,9 +218,9 @@ def main():
                                 scale_x_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[0], label="scale_x", step=0.01)
                                 scale_y_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[1], label="scale_y", step=0.01)
                                 scale_z_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[2], label="scale_z", step=0.01)
-                                scale_x_slider.change(updateState, inputs=[scale_x_slider, obj_index, type_scale, x_index])
-                                scale_y_slider.change(updateState, inputs=[scale_y_slider, obj_index, type_scale, y_index])
-                                scale_z_slider.change(updateState, inputs=[scale_z_slider, obj_index, type_scale, z_index])
+                                scale_x_slider.change(updateState, inputs=[scale_x_slider, obj_index, type_scale, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                scale_y_slider.change(updateState, inputs=[scale_y_slider, obj_index, type_scale, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                scale_z_slider.change(updateState, inputs=[scale_z_slider, obj_index, type_scale, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
 
                             remove_btn = gr.Button("Remove")
                             remove_btn.click(removeObj, obj_index, object_states)
