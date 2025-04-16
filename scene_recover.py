@@ -1,6 +1,6 @@
 import sys
 import os
-
+import gradio as gr
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 
 import math
@@ -33,7 +33,7 @@ import torch
 import json
 import pickle
 import re
-
+import tempfile
 import matplotlib.pyplot as plt
 from dict2xml import dict2xml
 from scipy.spatial.transform import Rotation as R
@@ -42,6 +42,9 @@ import trimesh
 import open3d as o3d
 from typing import Tuple
 from utils import *
+
+
+temp_dir = tempfile.mkdtemp()
 
 
 def intrinsic_decomposition(intrinsic_model, img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -466,6 +469,7 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
     # img = load_image(img_path)
     # img = load_from_url(img_path)
     img = img.astype(np.single) / float((2 ** 8) - 1)
+    interactive_state["origin_img"] = img
     # print(img)
     img = rescale(img, rescale_factor)
     interactive_state["src_img"] = img
@@ -502,7 +506,7 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
     scene_dict = scene_dict | light_dict
     
 
-    inpainted_render = render(scene_dict, interactive_state, 1, hr_spp, 0)
+    inpainted_render, _ = render(scene_dict, interactive_state, 1, hr_spp, 0)
     print("rgb_wo_obj done")
     depth_wo_obj = render_depth(scene_dict, 48)
     print("depth_wo_obj done")
@@ -514,7 +518,7 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
 
     return None, scene_dict, interactive_state, auto_rescale_factor(mi.load_dict(scene_dict))
 
-def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_weight=0, object_states=[]):
+def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_weight=0, object_states=[], save_file=False):
     """
     scene_dict: scene dictionary of geometry and lighting
     object_states: list of object states
@@ -530,7 +534,7 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
     for obj_state in object_states:
         object_dict.update(state2dict(obj_state))
     composed_scene_dict = scene_dict | object_dict
-
+    print("finish composing scene dict")
     
     scene = mi.load_dict(composed_scene_dict)
     rendered_insert = mi.render(scene, mi.traverse(scene), sensor=sensor_id, spp=spp)
@@ -541,22 +545,38 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
     inpainted_render = np.clip(inpainted_render, 0, 1)
 
     result_img = inpainted_render
+    src_img = interactive_state["src_img"] # H, W, 3
+    original_img = interactive_state["origin_img"]
+    original_size = original_img.shape[:2]
 
     if diff_compose_weight > 0:
         depth_w_obj = render_depth(composed_scene_dict, spp=48)
         depth_wo_obj = interactive_state["depth_wo_obj"]
         obj_mask = np.abs(depth_w_obj - depth_wo_obj) > 0.05 # H, W, 1
-        original_img = interactive_state["src_img"] # H, W, 3
         recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
-        re_original_img = resize(original_img, recon_img.shape[:2], anti_aliasing=True)
-        result_img = differential_compositing(re_original_img, recon_img, inpainted_render, obj_mask, diff_compose_weight)
+        re_src_img = resize(src_img, recon_img.shape[:2], anti_aliasing=True)
+        result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight)
+    temp_path = None
+    if save_file:
+        result_img_fullsize = resize(result_img, original_size, anti_aliasing=True)
+        result_img_fullsize = np_to_pil(result_img_fullsize)
+        temp_path = os.path.join(temp_dir, "rendered_image.png")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        result_img_fullsize.save(temp_path)
 
-    return result_img
+    save_button = None
+    if temp_path is not None:
+        save_button = gr.DownloadButton(label="Download Result", value=temp_path, visible=True)
+    else:
+        save_button = gr.DownloadButton(label="Download Result", visible=False)
+    return result_img, save_button
 
 
 def render_depth(scene_dict, spp=48):
-    scene_dict['integrator'] = {'type': 'aov', 'aovs': 'dd.y:depth'}
-    scene = mi.load_dict(scene_dict)
+    _scene_dict = scene_dict.copy()
+    _scene_dict['integrator'] = {'type': 'aov', 'aovs': 'dd.y:depth'}
+    scene = mi.load_dict(_scene_dict)
     rendered_depth = mi.render(scene, sensor=1, spp=spp)
     return np.array(rendered_depth)
 

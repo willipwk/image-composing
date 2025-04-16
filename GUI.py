@@ -105,6 +105,7 @@ def main():
     with gr.Blocks(theme=gr.themes.Base()) as gui:
         scene_dict = gr.State() # geometry of the input
         interactive_state = gr.State({
+            "origin_img": None,
             "src_img": None,
             "albedo": None,
             "dif_shd": None,
@@ -170,25 +171,24 @@ def main():
                     with gr.TabItem("Rendered Image", id=0):
                         res_image = gr.Image()
                         btn_3 = gr.Button("Render", variant='primary')
-                        compose_weight = gr.Slider(minimum=0, maximum=2, value=0, label="Differential Compositing Weight", step=0.01)
+                        btn_4 = gr.DownloadButton(label="Save Image", visible=False)
+                        compose_weight = gr.Slider(minimum=0, maximum=2, value=1, label="Differential Compositing Weight", step=0.01)
 
                     with gr.TabItem("Lighting Estimation", id=1):
                         gr.Markdown("### Let's estimate lighting environment in the image")
-                        gr.Markdown("The geometry of the image has been constructed. Please mark the light sources you identify on the left image.\nIf no input was given, light sources are evenly placed in the scene.")
+                        gr.Markdown("The geometry of the image has been constructed. Please mark the light sources you identify on the left image.\nIf no input was given, light sources are inferred automatically.")
                         temp_image = gr.ImageEditor(interactive=True, layers=False, sources=None)
                         temp = gr.State()
                         temp_size = gr.State()
                         src_image_path.change(auto_sacle, [src_image_path, gen_scale], [temp, temp_size]).then(
                             lambda x, y: {'background':x, 'composite':x, 'layers':[np.zeros((y[0], y[1], 4), np.uint8)]}, [temp, temp_size], temp_image
                         )
-
                 
-                btn_3.click(render, inputs=[scene_dict, interactive_state, gr.State(1), hr_spp, compose_weight, object_states], outputs=[res_image])
+                btn_3.click(render, inputs=[scene_dict, interactive_state, gr.State(1), hr_spp, compose_weight, object_states, gr.State(True)], outputs=[res_image, btn_4])
 
                 coord2D = gr.State()
                 coords3D = gr.State()
                 normal3D = gr.State()
-                
             
             with gr.Column(scale=1):
                 btn_2 = gr.Button("Update", interactive=False)
@@ -220,9 +220,9 @@ def main():
                                 pos_x_slider = gr.Slider(minimum=-5, maximum=5, value=pos[0], step=0.01, label="position_x")
                                 pos_y_slider = gr.Slider(minimum=-5, maximum=5, value=pos[1], step=0.01, label="position_y")
                                 pos_z_slider = gr.Slider(minimum=-5, maximum=5, value=pos[2], step=0.01, label='position_z')
-                                pos_x_slider.change(updateState, inputs=[pos_x_slider, obj_index, type_position, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
-                                pos_y_slider.change(updateState, inputs=[pos_y_slider, obj_index, type_position, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
-                                pos_z_slider.change(updateState, inputs=[pos_z_slider, obj_index, type_position, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                pos_x_slider.change(updateState, inputs=[pos_x_slider, obj_index, type_position, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
+                                pos_y_slider.change(updateState, inputs=[pos_y_slider, obj_index, type_position, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
+                                pos_z_slider.change(updateState, inputs=[pos_z_slider, obj_index, type_position, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
 
                             # gr.HTML("""<div align="center">Rotation (degree)</div>""")
                             with gr.Group():
@@ -230,9 +230,9 @@ def main():
                                 rotation_x_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[0], label="rotation_x")
                                 rotation_y_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[1], label="rotation_y")
                                 rotation_z_slider = gr.Slider(minimum=-180, maximum=180, value=rotation[2], label='rotation_z')
-                                rotation_x_slider.change(updateState, inputs=[rotation_x_slider, obj_index, type_rotation, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
-                                rotation_y_slider.change(updateState, inputs=[rotation_y_slider, obj_index, type_rotation, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
-                                rotation_z_slider.change(updateState, inputs=[rotation_z_slider, obj_index, type_rotation, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                rotation_x_slider.change(updateState, inputs=[rotation_x_slider, obj_index, type_rotation, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
+                                rotation_y_slider.change(updateState, inputs=[rotation_y_slider, obj_index, type_rotation, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
+                                rotation_z_slider.change(updateState, inputs=[rotation_z_slider, obj_index, type_rotation, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
 
                             # gr.HTML("""<div align="center">Scale</div>""")
                             with gr.Group():
@@ -240,9 +240,9 @@ def main():
                                 scale_x_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[0], label="scale_x", step=0.01)
                                 scale_y_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[1], label="scale_y", step=0.01)
                                 scale_z_slider = gr.Slider(minimum=0.1, maximum=5, value=scale[2], label="scale_z", step=0.01)
-                                scale_x_slider.change(updateState, inputs=[scale_x_slider, obj_index, type_scale, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
-                                scale_y_slider.change(updateState, inputs=[scale_y_slider, obj_index, type_scale, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
-                                scale_z_slider.change(updateState, inputs=[scale_z_slider, obj_index, type_scale, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image])
+                                scale_x_slider.change(updateState, inputs=[scale_x_slider, obj_index, type_scale, x_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
+                                scale_y_slider.change(updateState, inputs=[scale_y_slider, obj_index, type_scale, y_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
+                                scale_z_slider.change(updateState, inputs=[scale_z_slider, obj_index, type_scale, z_index]).then(render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4])
 
                             remove_btn = gr.Button("Remove")
                             remove_btn.click(removeObj, obj_index, object_states)
@@ -263,7 +263,7 @@ def main():
             ).then(
                 lambda _: gr.Tabs(selected=1), outputs=input_tab
             ).then(
-                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), compose_weight, object_states], [res_image]
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4]
             ).then(
                 lambda _: gr.update(interactive=True, variant='primary'), outputs=[btn_2]
             )
@@ -276,12 +276,10 @@ def main():
             ).then(
                 insert_object, [object_states, selected_obj_state, coords3D, auto_rescale_factor], outputs=[object_states]
             ).then(
-                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image]
+                render, [scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], [res_image, btn_4]
             )
         
-        btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], outputs=[res_image])
-        
-        # btn_3.click(fn=render, inputs=[scene_dict, interactive_state, render_sensor, compose_weight, hr_spp], outputs=res_image,)
+        btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), gr.State(48), gr.State(0), object_states], outputs=[res_image, btn_4])
 
     gui.launch()
 
