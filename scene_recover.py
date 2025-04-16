@@ -43,13 +43,21 @@ import open3d as o3d
 from typing import Tuple
 from utils import *
 
-
+# make temp directory to save render results
 temp_dir = tempfile.mkdtemp()
 
 
-def intrinsic_decomposition(intrinsic_model, img) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    # intrinsic decomposition
-
+def intrinsic_decomposition(intrinsic_model, img: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Decompose the input image into albedo and shading components.
+    Args:
+        intrinsic_model: The intrinsic decomposition model.
+        img (np.ndarray): The input image.
+    Returns:
+        image (np.ndarray): The input image.
+        albedo (np.ndarray): The albedo component.
+        dif_shd (np.ndarray): The shading component.
+    """
 
     intrinsic_result = run_pipeline(
         intrinsic_model,
@@ -66,22 +74,40 @@ def intrinsic_decomposition(intrinsic_model, img) -> Tuple[np.ndarray, np.ndarra
     return image, albedo, dif_shd
 
 
-def geometry_reconstruction(moge_model: MoGeModel, image: np.ndarray, height: int, width: int, sub_h: int, sub_w: int, albedo: np.ndarray, device: str, threshold: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    # recover geometry
-    
+def geometry_reconstruction(moge_model: MoGeModel, image: np.ndarray, height: int, width: int, sub_h: int, sub_w: int, albedo: np.ndarray, device: str, threshold: float) \
+    -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Reconstruct geometry from the input image using the MoGe model.
+    Args:
+        moge_model (MoGeModel): The MoGe model.
+        image (np.ndarray): The input image.
+        height (int): Height of the input image.
+        width (int): Width of the input image.
+        sub_h (int): Height of the sub-image.
+        sub_w (int): Width of the sub-image.
+        albedo (np.ndarray): The albedo component.
+        device (str): Device to run the model on ('cuda' or 'cpu').
+        threshold (float): Threshold for cutting mesh edges.
+    Returns:
+        intrinsics (np.ndarray): Camera intrinsics.
+        mask (np.ndarray): Mask of valid part of the image.
+        sky_comp_mask (np.ndarray): Mask of sky part of the image.
+        edge_mask (np.ndarray): Mask of edge part of the image.
+    """
+    # generate points, depth, mask, and intrinsics from MoGe model
     image_tensor = torch.tensor(image, dtype=torch.float32, device=device).permute(2, 0, 1)
     output = moge_model.infer(image_tensor ** (1/2.2))
     points, depth, mask, intrinsics = output['points'].cpu().numpy(), output['depth'].cpu().numpy(), output['mask'].cpu().numpy(), output['intrinsics'].cpu().numpy()
     points = points.clip(max=2**32)
-
+    # resize to original image size
     points = resize(points, (height, width))
     depth = resize(depth, (height, width))
     mask = resize(mask, (height, width))
-
+    # compute sky mask
     sky_mask = ~mask
     sky_comp_mask = sky_mask[..., None].astype(np.single)
     sub_sky_msk = resize(sky_comp_mask, (sub_h, sub_w))
-
+    # construct mesh from points and texture it with albedo
     faces, vertices, vertex_colors, vertex_uvs = utils3d.numpy.image_mesh(
         points,
         albedo,
@@ -105,7 +131,18 @@ def geometry_reconstruction(moge_model: MoGeModel, image: np.ndarray, height: in
     return intrinsics, mask, sky_comp_mask, edge_mask
 
 
-def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height: int, width: int):
+def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height: int, width: int) -> dict:
+    """
+    Prepare the scene dictionary for Mitsuba rendering.
+    Args:
+        intrinsics (np.ndarray): Camera intrinsics.
+        sub_h (int): Height of the sub-image.
+        sub_w (int): Width of the sub-image.
+        height (int): Height of the original image.
+        width (int): Width of the original image.
+    Returns:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+    """
     mi.set_variant('cuda_ad_rgb') # can be set to llvm_ad_rgb for CPU rendering
 
     # load the .ply file
@@ -169,7 +206,6 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
         }
     }
 
-
     # we first create the scene with the "aov" integrator to render the position map
     # this way we have the mesh's 3D points in image space which makes it easier to place the lights
     scene_dict = {
@@ -193,13 +229,23 @@ def prepare_diffren_scene(intrinsics: np.ndarray, sub_h: int, sub_w: int, height
     return scene_dict
 
 
-def optimize_light(scene_dict, target, mask, lights_mask):
+def optimize_light(scene_dict: dict, target, lights_mask: np.ndarray) -> Tuple[dict, np.ndarray]:
+    """
+    Infer the lighting conditions of the scene using differentiable rendering.
+    Args:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        target (mi.TensorXf): Target image for optimization.
+        lights_mask (np.ndarray): Mask of the light sources specified by users.
+    Returns:
+        light_dict (dict): Dictionary of optimized light sources configurations.
+        opt_envmap_data (np.ndarray): Optimized environment map data.
+    """
     scene_dict = scene_dict.copy()
     scene = mi.load_dict(scene_dict)
 
     sub_w, sub_h = scene.sensors()[0].film().crop_size()
 
-    "Calculate connected regions of the input mask"
+    # Calculate connected regions of the input mask
     lights_mask = resize(lights_mask, [sub_h, sub_w])
     binary_mask = (lights_mask[:, :, 3] > 0).astype(np.uint8)
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_mask)
@@ -213,11 +259,9 @@ def optimize_light(scene_dict, target, mask, lights_mask):
 
         pixel_indices = np.argwhere(labels == i)  # Get pixel coordinates
         pixel_areas[i] = pixel_indices  # Store pixels for each label
-
     
-    "Update scene dict with initial lights"
+    # Update scene dict with initial lights
     pl_count = 0
-    temp_dict_0 = {}
     if len(connected_areas) == 0: # if no estimated light source input
         print("Estimated Lighting Not Specified")
         grid_size = 4 # size of point light grid (grid_size x grid_size)
@@ -249,20 +293,16 @@ def optimize_light(scene_dict, target, mask, lights_mask):
                 }
             }
             pl_count += 1
-
-    else:
+    else: # users specified light source
         # get the positions of lights inserted
         space = 0.03
         for label, pixels in pixel_areas.items():
-            # print(f"Label {label}: {pixels.shape[0]} pixels")  # Number of pixels per area
-
             # choole pixels
             num_samples = 10 
             step = max(1, len(pixels) // num_samples)  # Adjust step size based on density
             sampled_pixels = pixels[::step]  # Select every 'step' pixel
-
+            # place point lights
             for i in range(num_samples):
-                # print("sampled pixels: ", sampled_pixels[i])
                 coord = sampled_pixels[i].astype(int).tolist()
                 coord[0], coord[1] = coord[1], coord[0]
                 position, normal = get_position_normal(scene_dict, coord, 0) # get location and normal for each pixel
@@ -277,8 +317,7 @@ def optimize_light(scene_dict, target, mask, lights_mask):
                 }
                 pl_count += 1
 
-    "Optimize lights"
-    # region
+    # Optimize lights through differentiable rendering
     scene_dict['integrator'] = {
             'type': 'path',
             'max_depth': 3
@@ -286,7 +325,6 @@ def optimize_light(scene_dict, target, mask, lights_mask):
     scene = mi.load_dict(scene_dict)
     params = mi.traverse(scene)
 
-    print(scene_dict)
     keys = []
     for i in range(pl_count):
         keys.append(f'pointlight_{i}.position')
@@ -313,14 +351,11 @@ def optimize_light(scene_dict, target, mask, lights_mask):
 
         # Perform a (noisy) differentiable rendering of the scene
         rendered = mi.render(scene, params, spp=curr_spp)
-        # plt.imshow(rendered)
-        # plt.savefig(f"result/iteration/{it}.png")
 
         # Evaluate the objective function from the current rendered image
         loss = mse(
             rendered,
             target,
-            mask=mask
         )
 
         # Backpropagate through the rendering process
@@ -344,10 +379,9 @@ def optimize_light(scene_dict, target, mask, lights_mask):
             break
 
         print(f"Iteration {it:02d}: {loss}", end='\r')
-    # endregion
 
     light_dict = {}
-
+    # save the optimized parameters
     for key in scene_dict.keys():
         if key.find("pointlight") != -1:
             light_dict[key] = {
@@ -363,16 +397,14 @@ def optimize_light(scene_dict, target, mask, lights_mask):
     print("\nLighting optimized")
     return light_dict, opt_envmap_data
 
-def state2dict(object_state):
+
+def state2dict(object_state: dict) -> dict:
     """
-    Input: object_state: A dictionary containing object information
-        keys:
-            'obj_name': object name
-            'obj_path': path to the object file
-            'position' ([float, float, float]): 3D coordinates in the scene
-            'rotation' ([float, float, float]): rotation along each axis
-            'scale' ([float, float, float]): scale factor for each asix
-    Output: A dictionary that can be used for mitsuba scene dictionary
+    Convert object state from gradio to a dictionary for Mitsuba rendering.
+    Args:
+        object_state (dict): Object state containing "obj_name", "obj_path", "position", "rotation", and "scale".
+    Returns:
+        object_dict (dict): Dictionary containing the object mesh and its transformation.
     """
 
     if object_state is None:
@@ -388,17 +420,14 @@ def state2dict(object_state):
     scale = object_state['scale']
 
     mtl_path = extract_mtl_file(obj_path)
-    #print(mtl_path)
     relative_mtl_path = obj_path[:obj_path.rfind('/') + 1] + mtl_path
-    #print(relative_mtl_path)
     texture_paths = extract_texture_paths(relative_mtl_path)
     # TODO: currently only assume one texture image for an object
     relative_texture_path = obj_path[:obj_path.rfind('/')] + texture_paths[0][texture_paths[0].rfind('/'):]
-    # obj = ply_mesh_texture(obj_path)
     obj = obj_mesh(obj_path, texture_path=relative_texture_path)
 
     object_dict[obj_name] = obj
-
+    # compute rotation from euler angles
     rotvec = R.from_euler('xyz', np.array(rotation), degrees=True).as_rotvec(degrees=True)
     angle = np.linalg.norm(rotvec)
     if angle < 1e-10:
@@ -406,7 +435,6 @@ def state2dict(object_state):
     else:
         axis = rotvec / angle
 
-    
     print("Insert ", obj_name, " into ", position)
 
     current=mi.ScalarTransform4f().look_at(
@@ -418,17 +446,17 @@ def state2dict(object_state):
 
     return object_dict
 
-def insert_object(object_states, new_object, position, scale=1):
+
+def insert_object(object_states: list, new_object: dict, position: np.ndarray | list, scale: float=1) -> dict:
     """
-    add new_object to object_states
-    Input:
-        object_states:
-        new_object_state: new object to be inserted {"obj_name", "obj_path"}
-        position:
-        rotation:
-        scale:
-    Output:
-        updated object_states
+    Append a new object to the list of object states.
+    Args:
+        object_states (list): List of existing object states.
+        new_object (dict): New object state containing "obj_name", "obj_path", "position", and "scale".
+        position (np.ndarray | list): Position of the new object.
+        scale (float): Scale of the new object.
+    Returns:
+        object_states (list): Updated list of object states.
     """
 
     if new_object is None:
@@ -458,7 +486,23 @@ def insert_object(object_states, new_object, position, scale=1):
     return object_states
 
 
-def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_state, lights_mask, hr_spp=4096 ):
+def reconstruct_image(model_states: dict, img: np.ndarray, rescale_factor: float, scene_dict: dict, interactive_state: dict, lights_mask: dict, spp: int=48) -> Tuple[None, dict, dict, float]:
+    """
+    Reconstruct the image using the given model states and input image.
+    Args:
+        model_states (dict): Dictionary containing MoGe and Intrinsic Decomposition models.
+        img (np.ndarray): Input image.
+        rescale_factor (float): Rescale factor for the input image.
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        interactive_state (dict): Interactive state for rendering.
+        lights_mask (dict): Mask of the light sources specified by users.
+        hr_spp (int): Samples per pixel for high-resolution rendering.
+    Returns:
+        None: will render reconstructed image later.
+        scene_dict (dict): Updated scene dictionary for Mitsuba rendering.
+        interactive_state (dict): Updated interactive state for rendering.
+        auto_rescale_factor (float): Rescale factor for the scene.
+    """
     device = 'cuda'
     threshold = 0.02 # threshold for cutting mesh edges
     sub_scale = 0.5 # scale factor for rendering/optimization
@@ -466,14 +510,11 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
     moge_model = model_states["moge_model"]
 
     # prepare image
-    # img = load_image(img_path)
-    # img = load_from_url(img_path)
     img = img.astype(np.single) / float((2 ** 8) - 1)
     interactive_state["origin_img"] = img
-    # print(img)
     img = rescale(img, rescale_factor)
     interactive_state["src_img"] = img
-
+    # decompose image into albedo and shading components
     image, albedo, dif_shd = intrinsic_decomposition(intrinsic_model, img)
     interactive_state["albedo"] = albedo
     interactive_state["dif_shd"] = dif_shd
@@ -487,12 +528,14 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
     sub_dif_shd = resize(dif_shd, (sub_h, sub_w))
     sub_img = resize(image, (sub_h, sub_w))
 
+    # reconstruct geometry from the image
     cam_intrinsics, mask, sky_comp_mask, edge_mask = geometry_reconstruction(moge_model, sub_img, height, width, sub_h, sub_w, albedo, device, threshold)
     interactive_state["sky_comp_mask"] = sky_comp_mask
     interactive_state["edge_mask"] = edge_mask
 
     print("Geometry constructed")
 
+    # setup the scene dictionary for Mitsuba rendering
     scene_dict = prepare_diffren_scene(cam_intrinsics, sub_h, sub_w, height, width)
 
     print("scene dictionary constructed")
@@ -501,46 +544,52 @@ def generate_3D_mesh(model_states, img, rescale_factor, scene_dict, interactive_
     np_target = sub_dif_shd * sub_alb # the optimization target is the diffuse image
     target = mi.TensorXf(np_target)
 
-    light_dict, opt_envmap_data = optimize_light(scene_dict, target, mask, lights_mask["layers"][0])
+    light_dict, opt_envmap_data = optimize_light(scene_dict, target, lights_mask["layers"][0])
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
     scene_dict = scene_dict | light_dict
-    
 
-    inpainted_render, _ = render(scene_dict, interactive_state, 1, hr_spp, 0)
-    print("rgb_wo_obj done")
-    depth_wo_obj = render_depth(scene_dict, 48)
-    print("depth_wo_obj done")
+    # render depth and rgb for later use
+    inpainted_render, _ = render(scene_dict, interactive_state, 1, spp, 0)
+    depth_wo_obj = render_depth(scene_dict, spp)
     interactive_state["depth_wo_obj"] = depth_wo_obj
     interactive_state["rgb_wo_obj"] = inpainted_render
 
-    # lights_mask = lights_mask["layers"][0]
-    
-
     return None, scene_dict, interactive_state, auto_rescale_factor(mi.load_dict(scene_dict))
 
-def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_weight=0, object_states=[], save_file=False):
-    """
-    scene_dict: scene dictionary of geometry and lighting
-    object_states: list of object states
-    """
 
+def render(scene_dict: dict, interactive_state: dict, sensor_id: int=0, spp: int=4096, diff_compose_weight: float=0, object_states: list=[], save_file: bool=False) -> Tuple[np.ndarray, gr.DownloadButton]:
+    """
+    Render the scene using Mitsuba and return the rendered image.
+    Args:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        interactive_state (dict): Interactive state for rendering.
+        sensor_id (int): Sensor ID for rendering.
+        spp (int): Samples per pixel for rendering.
+        diff_compose_weight (float): Weight for differential compositing.
+        object_states (list): List of object states to be rendered.
+        save_file (bool): Whether to save the rendered image.
+    Returns:
+        result_img (np.ndarray): Rendered image.
+        save_button (gr.DownloadButton): Download button for the rendered image.
+    """
+    # set integrator to path tracing
     scene_dict['integrator'] = {
         'type': 'path',
         'max_depth': 3
     }
 
-    # insert objects
+    # update scene dictionary with the current object configurations
     object_dict = {}
     for obj_state in object_states:
         object_dict.update(state2dict(obj_state))
     composed_scene_dict = scene_dict | object_dict
     print("finish composing scene dict")
-    
+    # render the scene and conduct gamma correction
     scene = mi.load_dict(composed_scene_dict)
     rendered_insert = mi.render(scene, mi.traverse(scene), sensor=sensor_id, spp=spp)
     inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
     inpainted_render = np.array(inpainted_render)
-    inpainted_render = gamma_correction(interactive_state["src_img"], inpainted_render)
+    inpainted_render = gamma_correction(interactive_state["origin_img"], inpainted_render)
 
     inpainted_render = np.clip(inpainted_render, 0, 1)
 
@@ -548,7 +597,7 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
     src_img = interactive_state["src_img"] # H, W, 3
     original_img = interactive_state["origin_img"]
     original_size = original_img.shape[:2]
-
+    # differential compositing. Here I use depth difference to compute object's mask since mitsuba's aov integrator does not provide correct shape index rendering. Don't know why.
     if diff_compose_weight > 0:
         depth_w_obj = render_depth(composed_scene_dict, spp=48)
         depth_wo_obj = interactive_state["depth_wo_obj"]
@@ -556,6 +605,7 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
         recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
         re_src_img = resize(src_img, recon_img.shape[:2], anti_aliasing=True)
         result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight)
+    # prepare save file
     temp_path = None
     if save_file:
         result_img_fullsize = resize(result_img, original_size, anti_aliasing=True)
@@ -573,26 +623,69 @@ def render(scene_dict, interactive_state, sensor_id=0, spp=4096, diff_compose_we
     return result_img, save_button
 
 
-def render_depth(scene_dict, spp=48):
+def render_depth(scene_dict: dict, spp: int=48) -> np.ndarray:
+    """
+    Render the depth of the scene using Mitsuba.
+    Args:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        spp (int): Samples per pixel for rendering.
+    Returns:
+        depth (np.ndarray): Rendered depth image.
+    """
     _scene_dict = scene_dict.copy()
     _scene_dict['integrator'] = {'type': 'aov', 'aovs': 'dd.y:depth'}
     scene = mi.load_dict(_scene_dict)
     rendered_depth = mi.render(scene, sensor=1, spp=spp)
     return np.array(rendered_depth)
 
-def render_position_and_normal(scene_dict, spp=48, sensor=1):
+
+def render_position_and_normal(scene_dict: dict, spp: int=48, sensor: int=1) -> mi.Bitmap:
+    """
+    Render the position and normal of the scene using Mitsuba.
+    Args:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        spp (int): Samples per pixel for rendering.
+        sensor (int): Sensor ID for rendering.
+    Returns:
+        aov_out (mi.Bitmap): Rendered position and normal image.
+    1. The position is stored in the first three channels (x, y, z).
+    2. The normal is stored in the next three channels (nx, ny, nz).
+    """
     _scene_dict = scene_dict.copy()
     _scene_dict['integrator'] = {'type': 'aov', 'aovs': 'pos:position, normal:sh_normal'}
     scene = mi.load_dict(_scene_dict)
     aov_out = mi.render(scene, sensor=sensor, spp=spp)
     return aov_out
 
-def differential_compositing(ori_img, recon_img, insert_img, mask, weight):
+
+def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_img: np.ndarray, mask: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    """
+    Differential compositing of the input images.
+    Args:
+        ori_img (np.ndarray): Original image.
+        recon_img (np.ndarray): Reconstructed image without object.
+        insert_img (np.ndarray): Reconstructed image with object.
+        mask (np.ndarray): Mask of the object.
+        weight (np.ndarray): Weight for differential compositing.
+    Returns:
+        compose (np.ndarray): Composed image.
+    """
     compose = mask * insert_img + (1 - mask) * (ori_img + weight * (insert_img - recon_img))
     compose = np.clip(compose, 0, 1)
     return compose
 
-def get_position_normal(scene_dict, pixel_coord, sensor_id=1):
+
+def get_position_normal(scene_dict: dict, pixel_coord: tuple, sensor_id: int=1) -> Tuple[np.ndarray | None, np.ndarray | None]:
+    """
+    Get the position and normal of a pixel in the scene.
+    Args:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        pixel_coord (tuple): Pixel coordinates (x, y).
+        sensor_id (int): Sensor ID for rendering.
+    Returns:
+        position (np.ndarray | None): Position of the pixel in world space.
+        normal (np.ndarray | None): Normal of the pixel in world space.
+    """
     x, y = pixel_coord
     scene = mi.load_dict(scene_dict)
     camera = scene.sensors()[sensor_id]

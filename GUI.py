@@ -98,12 +98,16 @@ def get_pixel_coord(evt: gr.SelectData):
     return evt.index
 
 def main():
+    # need to load some api before really use mitsuba
     initialize()
+    # load moge and intrinsics decomposition model
     moge_model = MoGeModel.from_pretrained('Ruicheng/moge-vitl').to('cuda').eval()
     intrinsic_model = load_models('v2')
 
+    # GUI
     with gr.Blocks(theme=gr.themes.Base()) as gui:
         scene_dict = gr.State() # geometry of the input
+        # this is for intermediate variables
         interactive_state = gr.State({
             "origin_img": None,
             "src_img": None,
@@ -120,7 +124,7 @@ def main():
         auto_rescale_factor = gr.State() # rescale 3D object when inserted
         object_states = gr.State([])    # list of object state {"obj_name", "obj_path", "position", "rotation", "scale"}
         selected_obj_state = gr.State({})   # selected object information {"obj_name", "obj_path"}
-        model_states = gr.State({"moge_model": moge_model, "intrinsic_model": intrinsic_model})
+        model_states = gr.State({"moge_model": moge_model, "intrinsic_model": intrinsic_model}) # to pass torch model to function via gradio
 
         gr.HTML(
             """
@@ -133,6 +137,7 @@ def main():
             """)
 
         with gr.Row():
+            # left column for input image
             with gr.Column(scale=1):
                 with gr.Tabs() as input_tab:
                     with gr.TabItem("Input Image", id=0):
@@ -166,7 +171,7 @@ def main():
                             allow_preview=False
                         )
                         gallery.select(get_select_obj, inputs=selected_obj_state, outputs=selected_obj_state)
-                    
+            # middle column for rendering GUI
             with gr.Column(scale=2):
                 with gr.Tabs() as render_tab:
                     with gr.TabItem("Rendered Image", id=0):
@@ -190,7 +195,7 @@ def main():
                 coord2D = gr.State()
                 coords3D = gr.State()
                 normal3D = gr.State()
-            
+            # right column for object manipulation
             with gr.Column(scale=1):
                 btn_2 = gr.Button("Update", interactive=False)
 
@@ -252,13 +257,14 @@ def main():
             print(x)
             print(x!={})
             return x!={}
-        
+        # select image
         src_image_path.change(fn=lambda x: gr.update(interactive=False, variant='secondary') if x is None else gr.update(interactive=True, variant='primary'), inputs=src_image_path, outputs=btn_1).then(
                 lambda _: gr.Tabs(selected=1), outputs=render_tab    
             )
         btn_1.click(lambda _: gr.Tabs(selected=0), outputs=render_tab)
+        # reconstruct image
         btn_1.click(
-                fn=generate_3D_mesh, 
+                fn=reconstruct_image, 
                 inputs=[model_states, src_image_path, gen_scale, scene_dict, interactive_state, temp_image, hr_spp], 
                 outputs=[res_image, scene_dict, interactive_state, auto_rescale_factor]
             ).then(
@@ -279,7 +285,7 @@ def main():
             ).then(
                 render, [scene_dict, interactive_state, gr.State(1), preview_spp, gr.State(0), object_states], [res_image, btn_4]
             )
-        
+        # update preview rendering
         btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), preview_spp, gr.State(0), object_states], outputs=[res_image, btn_4])
 
     gui.launch()

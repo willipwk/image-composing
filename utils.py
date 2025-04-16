@@ -7,30 +7,48 @@ import os
 from chrislib.general import invert, uninvert
 
 
-def save_ply(path, vertices, faces, vertex_colors):
+def save_ply(path: str, vertices: np.ndarray, faces: np.ndarray, vertex_colors: np.ndarray):
+    """
+    Save a mesh to a PLY file.
+    Args:
+        path (str): Path to save the PLY file.
+        vertices (np.ndarray): Array of vertex positions.
+        faces (np.ndarray): Array of face indices.
+        vertex_colors (np.ndarray): Array of vertex colors.
+    """
     trimesh.Trimesh(
         vertices=vertices, 
         faces=faces, 
         vertex_colors=vertex_colors,
         process=False
     ).export(path)
-
-
-def writeexr(I, path):
-    EXR_OPTIONS=[cv2.IMWRITE_EXR_COMPRESSION, cv2.IMWRITE_EXR_COMPRESSION_PIZ]
-    cv2.imwrite(path, cv2.cvtColor(np.float32(I), cv2.COLOR_RGB2BGR), EXR_OPTIONS)
     
 
-def load_exr(path):
-    img = cv2.imread(path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
-    return img[..., ::-1]
-
-
-def mse(image, target, mask=None):
+def mse(image, target):
+    """
+    Calculate the Mean Squared Error (MSE) between two images.
+    Args:
+        image (mi.TensorXf): The first image.
+        target (mi.TensorXf): The second image.
+    Returns:
+        mi.TensorXf: The MSE value.
+    """
     return dr.mean(dr.square(image - target))
 
 
-def inpaint_render(render, albedo, dif_shd, edge_mask, sky_mask, comp_sky=True):
+def inpaint_render(render: mi.Bitmap, albedo: np.ndarray, dif_shd: np.ndarray, edge_mask: np.ndarray, sky_mask: np.ndarray, comp_sky: bool=True) -> np.ndarray:
+    """
+    Inpaints the rendered shading to fill in the depth edges.
+    Args:
+        render (mi.Bitmap): The rendered image.
+        albedo (np.ndarray): The albedo image.
+        dif_shd (np.ndarray): The diffuse shading image.
+        edge_mask (np.ndarray): The edge mask.
+        sky_mask (np.ndarray): The sky mask.
+        comp_sky (bool): Whether to composite the sky or not.
+    Returns:
+        np.ndarray: The final render.
+    """
     rendered_shading = np.array(render / albedo.clip(0.0001))
 
     # inpaint the rendered shading to fill in the depth edges
@@ -62,7 +80,18 @@ def inpaint_render(render, albedo, dif_shd, edge_mask, sky_mask, comp_sky=True):
 
     return final_render
 
-def ply_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
+
+def ply_mesh(mesh_path: str, scale_factor: float=1, transform: list=[0.0, 0.0, 0.0], bsdf: dict=None) -> dict:
+    """
+    Load a PLY mesh and return its shape dictionary.
+    Args:
+        mesh_path (str): Path to the PLY file.
+        scale_factor (float): Scale factor for the mesh.
+        transform (list): Transformation matrix for the mesh.
+        bsdf (dict): BSDF properties.
+    Returns:
+        dict: Shape dictionary for the mesh.
+    """
     shape_dict = {
         'type': 'ply', 
         'filename': mesh_path
@@ -90,7 +119,18 @@ def ply_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None):
     return shape_dict
 
 
-def obj_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None, texture_path=None):
+def obj_mesh(mesh_path: str, scale_factor: float=1, transform: list=[0.0, 0.0, 0.0], bsdf: dict=None, texture_path: str=None) -> dict:
+    """
+    Load an OBJ mesh and return its shape dictionary.
+    Args:
+        mesh_path (str): Path to the OBJ file.
+        scale_factor (float): Scale factor for the mesh.
+        transform (list): Transformation matrix for the mesh.
+        bsdf (dict): BSDF properties.
+        texture_path (str): Path to the texture file.
+    Returns:
+        dict: Shape dictionary for the mesh.
+    """
     shape_dict = {
         'type': 'obj', 
         'filename': mesh_path
@@ -128,8 +168,14 @@ def obj_mesh(mesh_path, scale_factor=1, transform=[0.0, 0.0, 0.0], bsdf=None, te
     return shape_dict
 
 
-def extract_mtl_file(obj_file_path):
-    """Extract the associated MTL file from the OBJ file."""
+def extract_mtl_file(obj_file_path: str):
+    """
+    Extract the associated MTL file from the OBJ file.
+    Args:
+        obj_file_path (str): Path to the OBJ file.
+    Returns:
+        str: Path to the MTL file.
+    """
     mtl_filename = None
     with open(obj_file_path, 'r') as obj_file:
         for line in obj_file:
@@ -138,8 +184,15 @@ def extract_mtl_file(obj_file_path):
                 break
     return mtl_filename
 
-def extract_texture_paths(mtl_file_path):
-    """Extract texture paths from the MTL file."""
+
+def extract_texture_paths(mtl_file_path: str):
+    """
+    Extract texture paths from the MTL file.
+    Args:
+        mtl_file_path (str): Path to the MTL file.
+    Returns:
+        list: List of texture paths.
+    """
     texture_paths = []
     texture_keywords = ['map_Kd', 'map_Ka', 'map_Ks', 'map_Bump', 'bump', 'disp', 'decal', 'map_d']
 
@@ -149,35 +202,23 @@ def extract_texture_paths(mtl_file_path):
 
     with open(mtl_file_path, 'r') as mtl_file:
         for line in mtl_file:
-            #print("line:", line)
             for keyword in texture_keywords:
                 if line.startswith(keyword):
-                    #print("line.strip:", line.strip())
                     parts = line.strip().split()
-                    #print("parts:", parts)
                     if len(parts) > 1:
                         texture_path = parts[1]
                         texture_paths.append(texture_path)
     return texture_paths
 
 
-def str2float_tuple(input, size=3):
-    """
-    Converts a string of three floats separated by commas into a tuple of floats.
-    Returns None if size of tuple does not match
-    """
-    try:
-        float_list = [float(x) for x in input.split(',')]
-        if len(float_list) == size:
-            return tuple(float_list)
-        else:
-            return None
-    except ValueError:
-        return None
-
-def gamma_correction(original_image, reconstructed_image):
+def gamma_correction(original_image: np.ndarray, reconstructed_image: np.ndarray) -> np.ndarray:
     """
     Adjusts the gamma of the reconstructed image to match the brightness of the original image.
+    Args:
+        original_image (np.ndarray): The original image.
+        reconstructed_image (np.ndarray): The reconstructed image.
+    Returns:
+        corrected_image (np.ndarray): The gamma-corrected image.
     """
 
     corrected_image = np.zeros_like(reconstructed_image)
@@ -194,20 +235,20 @@ def gamma_correction(original_image, reconstructed_image):
     
     return np.clip(corrected_image, 0, 1)
 
-def auto_rescale_factor(scene, margin = 0.1):
+
+def auto_rescale_factor(scene, margin: float=0.1):
     """
-    returns rescale factor to fit within scene
-    Assuming that the object is normalized
+    Returns rescale factor of the object to fit within scene. Assuming that the object is normalized.
+    Args:
+        scene (mi.Scene): The scene containing the object.
+        margin (float): Margin to add around the object.
+    Returns:
+        float: The rescale factor.
     """
     scene_bounding_box = scene.bbox()
-
-    print(scene_bounding_box)
 
     edge_lengths = []
     for i in range(3):
         edge_lengths.append(scene_bounding_box.max[i] - scene_bounding_box.min[i])
-
-    print(edge_lengths)
-    print(margin * max(edge_lengths))
 
     return margin * max(edge_lengths)
