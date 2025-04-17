@@ -677,7 +677,7 @@ def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_
 
 def get_position_normal(scene_dict: dict, pixel_coord: tuple, sensor_id: int=1) -> Tuple[np.ndarray | None, np.ndarray | None]:
     """
-    Get the position and normal of a pixel in the scene.
+    Get the position and normal of a pixel in the scene. Using camera ray casting to get the position and normal is faster than render a whole map of position and normal.
     Args:
         scene_dict (dict): Scene dictionary for Mitsuba rendering.
         pixel_coord (tuple): Pixel coordinates (x, y).
