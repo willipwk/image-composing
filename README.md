@@ -24,7 +24,7 @@ A computer with a Nvidia GPU with at least 12GB CUDA memory should work.
 5. Goto MoGe's directory and install its dependecies
     ```bash
     cd MoGe
-    pip install requirements.txt
+    pip install -r requirements.txt
     cd ..
     ```
 6. Goto Intrinsic's directory and install its dependencies
