@@ -119,6 +119,8 @@ def main():
             "rgb_wo_obj": None,
             "rgb_w_obj": None,
             "aov_out": None,
+            "shape_wo_obj": None,
+            "shape_w_obj": None,
         })
 
         auto_rescale_factor = gr.State() # rescale 3D object when inserted
@@ -288,7 +290,7 @@ def main():
         # update preview rendering
         btn_2.click(fn=render, inputs=[scene_dict, interactive_state, gr.State(1), preview_spp, gr.State(0), object_states], outputs=[res_image, btn_4])
 
-    gui.launch()
+    gui.launch(share=True)
 
 if __name__ == '__main__':
     main()

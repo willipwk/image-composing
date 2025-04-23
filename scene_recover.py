@@ -548,11 +548,23 @@ def reconstruct_image(model_states: dict, img: np.ndarray, rescale_factor: float
     scene_dict['envmap']['bitmap'] = mi.Bitmap(opt_envmap_data)
     scene_dict = scene_dict | light_dict
 
-    # render depth and rgb for later use
+    # render shape index and rgb for later use
     inpainted_render, _ = render(scene_dict, interactive_state, 1, spp, 0)
-    depth_wo_obj = render_depth(scene_dict, spp)
-    interactive_state["depth_wo_obj"] = depth_wo_obj
     interactive_state["rgb_wo_obj"] = inpainted_render
+    shape_map = render_shape_index(scene_dict, spp)
+    print("shape id before object:", np.unique(shape_map))
+    print("# of shape id before object:", len(np.unique(shape_map)))
+    interactive_state["shape_wo_obj"] = np.unique(shape_map).tolist()
+
+    original_img = interactive_state["origin_img"]
+    original_size = original_img.shape[:2]
+
+    result_img_fullsize = resize(inpainted_render, original_size, anti_aliasing=True)
+    result_img_fullsize = np_to_pil(result_img_fullsize)
+    temp_path = "./light_reconstruct.png"
+    if os.path.exists(temp_path):
+        os.remove(temp_path)
+    result_img_fullsize.save(temp_path)
 
     return None, scene_dict, interactive_state, auto_rescale_factor(mi.load_dict(scene_dict))
 
@@ -599,12 +611,25 @@ def render(scene_dict: dict, interactive_state: dict, sensor_id: int=0, spp: int
     original_size = original_img.shape[:2]
     # differential compositing. Here I use depth difference to compute object's mask since mitsuba's aov integrator does not provide correct shape index rendering. Don't know why.
     if diff_compose_weight > 0:
-        depth_w_obj = render_depth(composed_scene_dict, spp=48)
-        depth_wo_obj = interactive_state["depth_wo_obj"]
-        obj_mask = np.abs(depth_w_obj - depth_wo_obj) > 0.05 # H, W, 1
+        shape_map = render_shape_index(composed_scene_dict, spp=48)
+        print("shape id:", np.unique(shape_map))
+        print("# of shape id:", len(np.unique(shape_map)))
+        shape_index_list = np.unique(shape_map).tolist()
+        shape_index_wo_obj = interactive_state["shape_wo_obj"]
+        new_shape_index = list(set(shape_index_list) - set(shape_index_wo_obj))
+        obj_mask = np.zeros_like(shape_map)
+        for id in new_shape_index:
+            obj_mask = np.logical_or(obj_mask, shape_map == id)
+
         recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
         re_src_img = resize(src_img, recon_img.shape[:2], anti_aliasing=True)
-        result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight)
+
+        insert_img_fullsize = resize(inpainted_render, original_size, anti_aliasing=True)
+        insert_img_fullsize = np_to_pil(insert_img_fullsize)
+        temp_path = "insert_image.png"
+        insert_img_fullsize.save(temp_path)
+
+        result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight, original_size)
     # prepare save file
     temp_path = None
     if save_file:
@@ -639,6 +664,22 @@ def render_depth(scene_dict: dict, spp: int=48) -> np.ndarray:
     return np.array(rendered_depth)
 
 
+def render_shape_index(scene_dict: dict, spp: int=48) -> np.ndarray:
+    """
+    Render the shape index of the scene using Mitsuba.
+    Args:
+        scene_dict (dict): Scene dictionary for Mitsuba rendering.
+        spp (int): Samples per pixel for rendering.
+    Returns:
+        shape_index (np.ndarray): Rendered shape index image.
+    """
+    _scene_dict = scene_dict.copy()
+    _scene_dict['integrator'] = {'type': 'aov', 'aovs': 'si:shape_index'}
+    scene = mi.load_dict(_scene_dict)
+    rendered_shape_index = mi.render(scene, sensor=1, spp=spp)
+    return np.array(rendered_shape_index).round(0).astype(np.uint8)
+
+
 def render_position_and_normal(scene_dict: dict, spp: int=48, sensor: int=1) -> mi.Bitmap:
     """
     Render the position and normal of the scene using Mitsuba.
@@ -658,7 +699,7 @@ def render_position_and_normal(scene_dict: dict, spp: int=48, sensor: int=1) -> 
     return aov_out
 
 
-def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_img: np.ndarray, mask: np.ndarray, weight: np.ndarray) -> np.ndarray:
+def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_img: np.ndarray, mask: np.ndarray, weight: np.ndarray, original_size: tuple | None) -> np.ndarray:
     """
     Differential compositing of the input images.
     Args:
@@ -670,6 +711,20 @@ def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_
     Returns:
         compose (np.ndarray): Composed image.
     """
+    residual_image = (1 - mask) * (insert_img - recon_img)
+    if original_size is not None:
+        residual_img_fullsize = resize(residual_image, original_size, anti_aliasing=True)
+        residual_img_fullsize = np_to_pil(residual_img_fullsize)
+        temp_path = "residual_image.png"
+        residual_img_fullsize.save(temp_path)
+
+    obj_image = mask * insert_img
+    if original_size is not None:
+        obj_img_fullsize = resize(obj_image, original_size, anti_aliasing=True)
+        obj_img_fullsize = np_to_pil(obj_img_fullsize)
+        temp_path = "obj_mask_image.png"
+        obj_img_fullsize.save(temp_path)
+
     compose = mask * insert_img + (1 - mask) * (ori_img + weight * (insert_img - recon_img))
     compose = np.clip(compose, 0, 1)
     return compose
