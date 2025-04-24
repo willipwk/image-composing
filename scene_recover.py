@@ -556,16 +556,6 @@ def reconstruct_image(model_states: dict, img: np.ndarray, rescale_factor: float
     print("# of shape id before object:", len(np.unique(shape_map)))
     interactive_state["shape_wo_obj"] = np.unique(shape_map).tolist()
 
-    original_img = interactive_state["origin_img"]
-    original_size = original_img.shape[:2]
-
-    result_img_fullsize = resize(inpainted_render, original_size, anti_aliasing=True)
-    result_img_fullsize = np_to_pil(result_img_fullsize)
-    temp_path = "./light_reconstruct.png"
-    if os.path.exists(temp_path):
-        os.remove(temp_path)
-    result_img_fullsize.save(temp_path)
-
     return None, scene_dict, interactive_state, auto_rescale_factor(mi.load_dict(scene_dict))
 
 
@@ -599,8 +589,8 @@ def render(scene_dict: dict, interactive_state: dict, sensor_id: int=0, spp: int
     # render the scene and conduct gamma correction
     scene = mi.load_dict(composed_scene_dict)
     rendered_insert = mi.render(scene, mi.traverse(scene), sensor=sensor_id, spp=spp)
-    inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
-    inpainted_render = np.array(inpainted_render)
+    # inpainted_render = inpaint_render(rendered_insert, interactive_state["albedo"], interactive_state["dif_shd"], interactive_state["edge_mask"], interactive_state["sky_comp_mask"])
+    inpainted_render = np.array(rendered_insert)
     inpainted_render = gamma_correction(interactive_state["origin_img"], inpainted_render)
 
     inpainted_render = np.clip(inpainted_render, 0, 1)
@@ -623,11 +613,6 @@ def render(scene_dict: dict, interactive_state: dict, sensor_id: int=0, spp: int
 
         recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
         re_src_img = resize(src_img, recon_img.shape[:2], anti_aliasing=True)
-
-        insert_img_fullsize = resize(inpainted_render, original_size, anti_aliasing=True)
-        insert_img_fullsize = np_to_pil(insert_img_fullsize)
-        temp_path = "insert_image.png"
-        insert_img_fullsize.save(temp_path)
 
         result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight, original_size)
     # prepare save file
@@ -699,7 +684,7 @@ def render_position_and_normal(scene_dict: dict, spp: int=48, sensor: int=1) -> 
     return aov_out
 
 
-def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_img: np.ndarray, mask: np.ndarray, weight: np.ndarray, original_size: tuple | None) -> np.ndarray:
+def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_img: np.ndarray, mask: np.ndarray, weight: np.ndarray) -> np.ndarray:
     """
     Differential compositing of the input images.
     Args:
@@ -711,20 +696,6 @@ def differential_compositing(ori_img: np.ndarray, recon_img: np.ndarray, insert_
     Returns:
         compose (np.ndarray): Composed image.
     """
-    residual_image = (1 - mask) * (insert_img - recon_img)
-    if original_size is not None:
-        residual_img_fullsize = resize(residual_image, original_size, anti_aliasing=True)
-        residual_img_fullsize = np_to_pil(residual_img_fullsize)
-        temp_path = "residual_image.png"
-        residual_img_fullsize.save(temp_path)
-
-    obj_image = mask * insert_img
-    if original_size is not None:
-        obj_img_fullsize = resize(obj_image, original_size, anti_aliasing=True)
-        obj_img_fullsize = np_to_pil(obj_img_fullsize)
-        temp_path = "obj_mask_image.png"
-        obj_img_fullsize.save(temp_path)
-
     compose = mask * insert_img + (1 - mask) * (ori_img + weight * (insert_img - recon_img))
     compose = np.clip(compose, 0, 1)
     return compose
