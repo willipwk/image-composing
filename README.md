@@ -1,6 +1,6 @@
 # Image Composing with 3D Object
 
-This is the repository of CMPT 461/769 group project.
+Implementation of the interface from *Interactive Object Insertion with Differentiable Rendering*.
 
 ## Requirements
 This code is developed and tested on a workstation with the following configuration:
