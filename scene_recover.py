@@ -614,7 +614,7 @@ def render(scene_dict: dict, interactive_state: dict, sensor_id: int=0, spp: int
         recon_img = interactive_state["rgb_wo_obj"] # H, W, 3
         re_src_img = resize(src_img, recon_img.shape[:2], anti_aliasing=True)
 
-        result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight, original_size)
+        result_img = differential_compositing(re_src_img, recon_img, inpainted_render, obj_mask, diff_compose_weight)
     # prepare save file
     temp_path = None
     if save_file:
